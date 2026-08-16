@@ -177,6 +177,125 @@ window.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  // Comandos explícitos de memória e arquivamento de conversa.
+  const normalizeCommand = (value) => String(value || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim();
+
+  const collectConversation = () => {
+    if (!feed) return [];
+    return [...feed.querySelectorAll('.msg')].map((message) => {
+      const bubble = message.querySelector('.bubble');
+      const text = bubble?.textContent?.trim() || '';
+      const role = message.classList.contains('user') ? 'user' : 'assistant';
+      return { role, text };
+    }).filter((item) => item.text && !item.text.startsWith('Acesso autenticado.'));
+  };
+
+  let callablesPromise = null;
+  const getMemoryCallables = async () => {
+    if (!callablesPromise) {
+      callablesPromise = (async () => {
+        const [{ getApps }, { getFunctions, httpsCallable }] = await Promise.all([
+          import('https://www.gstatic.com/firebasejs/12.2.1/firebase-app.js'),
+          import('https://www.gstatic.com/firebasejs/12.2.1/firebase-functions.js')
+        ]);
+        let apps = getApps();
+        for (let i = 0; !apps.length && i < 30; i += 1) {
+          await new Promise((resolve) => setTimeout(resolve, 100));
+          apps = getApps();
+        }
+        if (!apps.length) throw new Error('Firebase ainda não inicializado.');
+        const functions = getFunctions(apps[0], 'southamerica-east1');
+        return {
+          saveConversation: httpsCallable(functions, 'saveConversation'),
+          saveMemoryCommand: httpsCallable(functions, 'saveMemoryCommand')
+        };
+      })();
+    }
+    return callablesPromise;
+  };
+
+  const addLocalMessage = (role, text) => {
+    if (typeof window.nexusAddMsg === 'function') window.nexusAddMsg(role, text);
+  };
+
+  const saveExplicitMemory = async (text) => {
+    const callables = await getMemoryCallables();
+    const result = await callables.saveMemoryCommand({ text });
+    const item = result?.data || {};
+    if (item.saved && window.NEXUS_STATE?.memory) {
+      window.NEXUS_STATE.memory.unshift({ id: item.id, project: item.project, type: item.type, text: item.text, createdAt: null });
+      if (typeof window.nexusRender === 'function') window.nexusRender();
+    }
+    return item;
+  };
+
+  const originalSend = window.sendMsg;
+  if (typeof originalSend === 'function') {
+    window.sendMsg = async (event) => {
+      const input = document.getElementById('input');
+      const rawText = input?.value?.trim() || '';
+      const normalized = normalizeCommand(rawText);
+      const pendingMemory = sessionStorage.getItem('nexusPendingMemory') === '1';
+
+      const isSaveConversation = /\b(salve|salvar|guarde|guardar)\b.*\b(conversa|chat)\b/.test(normalized);
+      const isMemoryStart = /^(nexus[, ]*)?(guardar|guarde|salvar|salve)\s+(uma\s+)?(informacao|memoria)\s*[:.!]?\s*$/.test(normalized);
+      const directMemoryMatch = normalized.match(/^(?:nexus[, ]*)?(?:guarde|guardar|lembre|salve na memoria|salvar na memoria)(?:\s+(?:que|informacao|isso))?\s*[:,-]?\s+(.+)$/);
+
+      if (isSaveConversation) {
+        event?.preventDefault?.();
+        addLocalMessage('user', rawText);
+        if (input) input.value = '';
+        const messages = collectConversation().filter((item) => normalizeCommand(item.text) !== normalized);
+        if (messages.length < 2) {
+          addLocalMessage('assistant', 'Ainda não há conversa suficiente para salvar.');
+          return;
+        }
+        addLocalMessage('assistant', 'Salvando esta conversa...');
+        try {
+          const callables = await getMemoryCallables();
+          const result = await callables.saveConversation({ messages });
+          const saved = result?.data || {};
+          addLocalMessage('assistant', `Conversa salva no Storage: ${saved.title || 'Conversa Nexus'}${saved.project ? ` • ${saved.project}` : ''}.`);
+        } catch (error) {
+          console.error(error);
+          addLocalMessage('assistant', 'Não consegui salvar a conversa. Verifique se as novas Functions já foram publicadas.');
+        }
+        return;
+      }
+
+      if (isMemoryStart) {
+        event?.preventDefault?.();
+        addLocalMessage('user', rawText);
+        if (input) input.value = '';
+        sessionStorage.setItem('nexusPendingMemory', '1');
+        addLocalMessage('assistant', 'Qual informação você quer que eu guarde?');
+        return;
+      }
+
+      const memoryText = pendingMemory ? rawText : directMemoryMatch?.[1];
+      if (memoryText) {
+        event?.preventDefault?.();
+        addLocalMessage('user', rawText);
+        if (input) input.value = '';
+        sessionStorage.removeItem('nexusPendingMemory');
+        try {
+          const saved = await saveExplicitMemory(memoryText);
+          addLocalMessage('assistant', `Informação guardada: [${saved.type || 'memória'}] ${saved.project ? `${saved.project} — ` : ''}${saved.text || memoryText}`);
+        } catch (error) {
+          console.error(error);
+          addLocalMessage('assistant', 'Não consegui guardar a informação. Verifique se as novas Functions já foram publicadas.');
+        }
+        return;
+      }
+
+      return originalSend(event);
+    };
+  }
+
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('./service-worker.js').catch((error) => {
       console.warn('Nexus service worker não registrado:', error);
