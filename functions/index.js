@@ -12,7 +12,23 @@ const MODEL_ID = 'openai/gpt-oss-120b';
 const MAX_PROMPT_CHARS = 4000;
 const MAX_MEMORY_ITEMS = 20;
 const MAX_OUTPUT_TOKENS = 800;
-const MAX_GITHUB_CONTEXT_CHARS = 12000;
+const MAX_GITHUB_CONTEXT_CHARS = 24000;
+const MAX_FILES_TO_INSPECT = 5;
+const MAX_FILE_CHARS = 5000;
+const MAX_FILE_BYTES = 180000;
+
+const TEXT_EXTENSIONS = new Set([
+  'js', 'jsx', 'ts', 'tsx', 'html', 'css', 'json', 'md', 'txt', 'yml', 'yaml',
+  'rules', 'xml', 'php', 'py', 'java', 'kt', 'swift', 'dart', 'sql', 'sh', 'env'
+]);
+
+const STOP_WORDS = new Set([
+  'a', 'ao', 'aos', 'as', 'com', 'como', 'da', 'das', 'de', 'do', 'dos', 'e', 'em',
+  'esse', 'esta', 'este', 'eu', 'me', 'meu', 'minha', 'na', 'nas', 'no', 'nos', 'o',
+  'os', 'ou', 'para', 'por', 'que', 'se', 'tem', 'um', 'uma', 'voce', 'você', 'nexus',
+  'analise', 'analisar', 'investigue', 'investigar', 'problema', 'codigo', 'código',
+  'repositorio', 'repositório', 'github', 'projeto'
+]);
 
 const REPOSITORIES = [
   { key: 'pronti-pet', name: 'Pronti Pet', fullName: 'giva-norberto/pronti-pet', aliases: ['pronti pet', 'pronti-pet'] },
@@ -53,6 +69,13 @@ async function githubFetch(path) {
   return response.json();
 }
 
+function encodeRepoPath(path) {
+  return String(path)
+    .split('/')
+    .map((part) => encodeURIComponent(part))
+    .join('/');
+}
+
 function detectRepositories(prompt) {
   const normalized = prompt.toLowerCase();
   const explicit = REPOSITORIES.filter((repo) => repo.aliases.some((alias) => normalized.includes(alias)));
@@ -65,12 +88,110 @@ function detectRepositories(prompt) {
   return [];
 }
 
-async function getRepositoryContext(repo) {
-  const [meta, root, pulls, issues] = await Promise.all([
-    githubFetch(`/repos/${repo.fullName}`),
-    githubFetch(`/repos/${repo.fullName}/contents`),
+function getPromptKeywords(prompt) {
+  const normalized = String(prompt)
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9._/-]+/g, ' ');
+
+  return [...new Set(
+    normalized
+      .split(/\s+/)
+      .map((term) => term.trim())
+      .filter((term) => term.length >= 3 && !STOP_WORDS.has(term))
+  )].slice(0, 18);
+}
+
+function isTextFile(path) {
+  const lower = String(path).toLowerCase();
+  const name = lower.split('/').pop() || '';
+  if (['dockerfile', 'makefile', '.gitignore', '.firebaserc', '.replit'].includes(name)) return true;
+  const extension = name.includes('.') ? name.split('.').pop() : '';
+  return TEXT_EXTENSIONS.has(extension);
+}
+
+function scoreFilePath(path, keywords) {
+  const normalizedPath = String(path)
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+  const fileName = normalizedPath.split('/').pop() || normalizedPath;
+  let score = 0;
+
+  for (const keyword of keywords) {
+    const clean = keyword.replace(/^\.\//, '');
+    if (!clean) continue;
+    if (fileName === clean) score += 12;
+    else if (fileName.includes(clean)) score += 7;
+    else if (normalizedPath.includes(clean)) score += 4;
+  }
+
+  if (/firebase|firestore|rules|auth|login|agenda|atendimento|cliente|fila|vacina|dashboard|function/.test(fileName)) {
+    score += 1;
+  }
+
+  return score;
+}
+
+function addLineNumbers(content) {
+  return String(content)
+    .split('\n')
+    .map((line, index) => `${index + 1}: ${line}`)
+    .join('\n');
+}
+
+async function inspectRelevantFiles(repo, defaultBranch, prompt) {
+  const keywords = getPromptKeywords(prompt);
+  if (!keywords.length) return '';
+
+  const tree = await githubFetch(`/repos/${repo.fullName}/git/trees/${encodeURIComponent(defaultBranch)}?recursive=1`);
+  const entries = Array.isArray(tree?.tree) ? tree.tree : [];
+
+  const candidates = entries
+    .filter((item) => item.type === 'blob' && isTextFile(item.path) && Number(item.size || 0) <= MAX_FILE_BYTES)
+    .map((item) => ({ ...item, score: scoreFilePath(item.path, keywords) }))
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score || Number(a.size || 0) - Number(b.size || 0))
+    .slice(0, MAX_FILES_TO_INSPECT);
+
+  if (!candidates.length) {
+    return 'Arquivos inspecionados em profundidade: nenhum arquivo teve correspondência suficiente com os termos da pergunta.';
+  }
+
+  const blocks = [];
+  for (const candidate of candidates) {
+    try {
+      const payload = await githubFetch(`/repos/${repo.fullName}/contents/${encodeRepoPath(candidate.path)}?ref=${encodeURIComponent(defaultBranch)}`);
+      if (!payload || payload.type !== 'file' || payload.encoding !== 'base64' || !payload.content) continue;
+
+      const decoded = Buffer.from(String(payload.content).replace(/\n/g, ''), 'base64').toString('utf8');
+      const numbered = addLineNumbers(decoded).slice(0, MAX_FILE_CHARS);
+      blocks.push([
+        `ARQUIVO CONFIRMADO: ${candidate.path}`,
+        `SHA: ${payload.sha || candidate.sha || ''}`,
+        'Conteúdo (linhas numeradas; pode estar truncado):',
+        numbered
+      ].join('\n'));
+    } catch (err) {
+      console.error('File inspection error', repo.fullName, candidate.path, err);
+    }
+  }
+
+  return blocks.length
+    ? `Arquivos inspecionados em profundidade:\n\n${blocks.join('\n\n---\n\n')}`
+    : 'Arquivos inspecionados em profundidade: não foi possível carregar os candidatos.';
+}
+
+async function getRepositoryContext(repo, prompt) {
+  const meta = await githubFetch(`/repos/${repo.fullName}`);
+  const defaultBranch = meta.default_branch || 'main';
+
+  const [root, pulls, issues, fileInspection] = await Promise.all([
+    githubFetch(`/repos/${repo.fullName}/contents?ref=${encodeURIComponent(defaultBranch)}`),
     githubFetch(`/repos/${repo.fullName}/pulls?state=open&per_page=5`),
-    githubFetch(`/repos/${repo.fullName}/issues?state=open&per_page=5`)
+    githubFetch(`/repos/${repo.fullName}/issues?state=open&per_page=5`),
+    inspectRelevantFiles(repo, defaultBranch, prompt)
   ]);
 
   const rootItems = Array.isArray(root)
@@ -88,7 +209,7 @@ async function getRepositoryContext(repo) {
   return [
     `Projeto: ${repo.name}`,
     `Repositório: ${repo.fullName}`,
-    `Branch padrão: ${meta.default_branch || 'main'}`,
+    `Branch padrão: ${defaultBranch}`,
     `Privado: ${meta.private ? 'sim' : 'não'}`,
     `Atualizado em: ${meta.updated_at || ''}`,
     'Estrutura raiz:',
@@ -96,7 +217,8 @@ async function getRepositoryContext(repo) {
     'Pull requests abertos:',
     openPulls,
     'Issues abertas:',
-    openIssues
+    openIssues,
+    fileInspection
   ].join('\n');
 }
 
@@ -107,7 +229,7 @@ async function buildGithubContext(prompt) {
   const blocks = [];
   for (const repo of repos.slice(0, 4)) {
     try {
-      blocks.push(await getRepositoryContext(repo));
+      blocks.push(await getRepositoryContext(repo, prompt));
     } catch (err) {
       console.error('Repository context error', repo.fullName, err);
       blocks.push(`Projeto: ${repo.name}\nRepositório: ${repo.fullName}\nFalha ao carregar contexto deste repositório.`);
@@ -199,8 +321,12 @@ exports.askNexus = onCall(
       'Responda em português do Brasil, com precisão e objetividade.',
       'Use as memórias fornecidas apenas quando forem relevantes.',
       'Quando houver contexto GitHub, trate-o como fonte real do estado atual dos repositórios autorizados.',
-      'Não invente arquivos, branches, PRs, issues ou fatos que não estejam no contexto.',
-      'Nesta etapa você possui leitura operacional do GitHub dentro dos repositórios autorizados, mas ainda não executa alterações no GitHub a partir desta função de chat.',
+      'Diferencie explicitamente fatos confirmados no conteúdo dos arquivos de inferências técnicas.',
+      'Quando apontar a origem de um problema, informe o caminho exato do arquivo e, quando as linhas estiverem disponíveis no contexto, indique as linhas relevantes.',
+      'Nunca diga que inspecionou um arquivo se o conteúdo desse arquivo não aparecer como ARQUIVO CONFIRMADO no contexto.',
+      'Se os arquivos carregados não forem suficientes para concluir a causa, diga que a causa ainda não foi confirmada e indique qual arquivo ou evidência precisa ser analisado.',
+      'Não invente arquivos, branches, PRs, issues, funções ou comportamentos que não estejam no contexto.',
+      'Nesta etapa você possui leitura e investigação operacional do GitHub dentro dos repositórios autorizados, mas ainda não executa alterações no GitHub a partir desta função de chat.',
       'Ações críticas como alterar produção, excluir dados, mudar regras/permissões, merge, deploy ou gerar custo exigem aprovação humana explícita.'
     ].join(' ');
 
