@@ -3,47 +3,99 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Nexus — Protótipo Local</title>
+<title>Nexus</title>
 <style>
 :root{--bg:#090b10;--panel:#121722;--panel2:#171e2b;--line:#263044;--text:#edf2ff;--muted:#93a0b7;--accent:#7da2ff;--ok:#37d39a;--warn:#f3b74a;--err:#ff6178}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}button,input,textarea,select{font:inherit}button{cursor:pointer}
-#app{min-height:100vh;display:grid;grid-template-columns:1fr 360px}main{min-width:0;display:flex;flex-direction:column;min-height:100vh}header{display:flex;align-items:center;gap:10px;padding:12px 18px;border-bottom:1px solid var(--line);background:var(--panel);position:sticky;top:0;z-index:2}.brand{font-weight:800;letter-spacing:.22em;color:var(--accent)}.badge,.pill{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:999px;padding:3px 8px;font-size:11px;color:var(--muted)}.badge.ok,.pill.ok{color:var(--ok);border-color:#225844}.spacer{flex:1}.btn{border:1px solid var(--line);background:var(--panel2);color:var(--text);border-radius:8px;padding:8px 11px}.btn:hover{border-color:var(--accent)}.btn.primary{background:var(--accent);color:#08101f;border-color:var(--accent);font-weight:700}.btn.danger{color:var(--err)}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}button,input,textarea,select{font:inherit}button{cursor:pointer}.hidden{display:none!important}
+#authGate{min-height:100vh;display:grid;place-items:center;padding:24px;background:radial-gradient(circle at top,#111a2c 0,#090b10 52%)}
+.loginBox{width:min(430px,94vw);background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:28px;box-shadow:0 20px 70px rgba(0,0,0,.35)}.brand{font-weight:800;letter-spacing:.22em;color:var(--accent)}.loginBox h1{margin:14px 0 8px;font-size:28px}.muted{color:var(--muted)}.authStatus{margin-top:14px;min-height:20px;color:var(--muted)}
+.btn{border:1px solid var(--line);background:var(--panel2);color:var(--text);border-radius:9px;padding:9px 12px}.btn:hover{border-color:var(--accent)}.btn.primary{background:var(--accent);color:#08101f;border-color:var(--accent);font-weight:700}.btn.danger{color:var(--err)}
+#app{min-height:100vh;display:grid;grid-template-columns:1fr 360px}main{min-width:0;display:flex;flex-direction:column;min-height:100vh}header{display:flex;align-items:center;gap:10px;padding:12px 18px;border-bottom:1px solid var(--line);background:var(--panel);position:sticky;top:0;z-index:2}.badge,.pill{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:999px;padding:3px 8px;font-size:11px;color:var(--muted)}.badge.ok,.pill.ok{color:var(--ok);border-color:#225844}.spacer{flex:1}.userTag{font-size:12px;color:var(--muted)}
 #feed{flex:1;overflow:auto;padding:22px;display:flex;flex-direction:column;gap:14px}.msg{max-width:860px;display:flex;gap:10px}.msg.user{align-self:flex-end;flex-direction:row-reverse}.avatar{width:30px;height:30px;border-radius:8px;display:grid;place-items:center;font-size:10px;font-weight:800;flex:0 0 30px;background:linear-gradient(135deg,#4f46e5,#7da2ff)}.msg.user .avatar{background:var(--panel2);color:var(--muted)}.bubble{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:11px 14px;white-space:pre-wrap;overflow-wrap:anywhere}.msg.user .bubble{background:var(--panel2)}
 #composer{display:flex;gap:10px;padding:14px 18px;border-top:1px solid var(--line);background:var(--panel);position:sticky;bottom:0}#input{flex:1;resize:none;min-height:44px;max-height:150px;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:11px 13px;outline:none}
-aside{border-left:1px solid var(--line);background:var(--panel);overflow:auto;max-height:100vh;position:sticky;top:0}.sec{padding:14px 15px;border-bottom:1px solid var(--line)}.sec h2{font-size:10px;text-transform:uppercase;letter-spacing:.15em;color:var(--muted);margin:0 0 10px}.card{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 11px;margin-bottom:8px}.card:last-child{margin-bottom:0}.t{font-weight:700}.s{color:var(--muted);font-size:12px;margin-top:3px}.row{display:flex;gap:7px;flex-wrap:wrap;margin-top:8px}.metric{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;margin:6px 0;color:var(--muted);font-size:12px}.bar{height:5px;background:#0c111b;border-radius:999px;overflow:hidden}.bar>span{display:block;height:100%;background:var(--accent)}.event{padding:8px 0;border-bottom:1px dashed var(--line)}.event:last-child{border-bottom:0}.event b{font-size:12px}.event small{color:var(--muted)}.approval{border-left:3px solid var(--warn)}.rule{display:flex;justify-content:space-between;gap:10px;font-size:12px;padding:4px 0}.rule strong{color:var(--ok)}.rule strong.block{color:var(--err)}
-.modal{position:fixed;inset:0;background:rgba(0,0,0,.72);display:none;place-items:center;z-index:10;padding:20px}.modal .box{width:min(720px,96vw);max-height:90vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px}.modal h3{margin-top:0}textarea.full{width:100%;min-height:180px;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:10px}@media(max-width:980px){#app{grid-template-columns:1fr}aside{position:static;max-height:none;border-left:0;border-top:1px solid var(--line)}}
+aside{border-left:1px solid var(--line);background:var(--panel);overflow:auto;max-height:100vh;position:sticky;top:0}.sec{padding:14px 15px;border-bottom:1px solid var(--line)}.sec h2{font-size:10px;text-transform:uppercase;letter-spacing:.15em;color:var(--muted);margin:0 0 10px}.card{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 11px;margin-bottom:8px}.t{font-weight:700}.s{color:var(--muted);font-size:12px;margin-top:3px}.row{display:flex;gap:7px;flex-wrap:wrap;margin-top:8px}.rule{display:flex;justify-content:space-between;gap:10px;font-size:12px;padding:4px 0}.rule strong{color:var(--ok)}.rule strong.block{color:var(--err)}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.72);display:none;place-items:center;z-index:10;padding:20px}.modal .box{width:min(720px,96vw);max-height:90vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px}.full,input,select{width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:10px}.full{min-height:160px}
+@media(max-width:980px){#app{grid-template-columns:1fr}aside{position:static;max-height:none;border-left:0;border-top:1px solid var(--line)}}
 </style>
 </head>
 <body>
-<div id="app">
+<div id="authGate">
+  <div class="loginBox">
+    <div class="brand">NEXUS</div>
+    <h1>Acesso protegido</h1>
+    <div class="muted">Entre com a conta Google autorizada para acessar o painel.</div>
+    <div style="margin-top:20px"><button id="loginBtn" class="btn primary">Entrar com Google</button></div>
+    <div id="authStatus" class="authStatus"></div>
+  </div>
+</div>
+
+<div id="app" class="hidden">
 <main>
-<header><span class="brand">NEXUS</span><span class="badge ok">● MODO LOCAL / R$ 0</span><span class="badge">Protótipo v0.1</span><span class="spacer"></span><button class="btn" onclick="runAutonomy()">Executar ciclo seguro</button><button class="btn" onclick="openMemory()">Ensinar</button></header>
+<header>
+  <span class="brand">NEXUS</span>
+  <span class="badge ok">● ONLINE / AUTH</span>
+  <span class="badge">v0.2</span>
+  <span class="spacer"></span>
+  <span id="userEmail" class="userTag"></span>
+  <button class="btn" onclick="runAutonomy()">Executar ciclo seguro</button>
+  <button class="btn" onclick="openMemory()">Ensinar</button>
+  <button id="logoutBtn" class="btn">Sair</button>
+</header>
 <div id="feed"></div>
 <form id="composer" onsubmit="sendMsg(event)"><textarea id="input" placeholder="Ex.: investigue o status do atendimento no Pronti Pet"></textarea><button class="btn primary" type="submit">Enviar</button></form>
 </main>
 <aside>
-<div class="sec"><h2>Governança</h2><div class="card"><div class="rule"><span>Observar</span><strong>AUTÔNOMO</strong></div><div class="rule"><span>Investigar</span><strong>AUTÔNOMO</strong></div><div class="rule"><span>Preparar código</span><strong>AUTÔNOMO</strong></div><div class="rule"><span>Testar / revisar</span><strong>AUTÔNOMO</strong></div><div class="rule"><span>Abrir PR</span><strong>AUTÔNOMO</strong></div><div class="rule"><span>Alterar produção</span><strong class="block">BLOQUEADO</strong></div><div class="rule"><span>Excluir dados</span><strong class="block">BLOQUEADO</strong></div><div class="rule"><span>Mudar regras/permissões</span><strong class="block">BLOQUEADO</strong></div><div class="rule"><span>Merge / deploy</span><strong class="block">SEU OK</strong></div><div class="rule"><span>Gerar custo</span><strong class="block">BLOQUEADO</strong></div></div></div>
+<div class="sec"><h2>Governança</h2><div class="card">
+<div class="rule"><span>Observar</span><strong>AUTÔNOMO</strong></div><div class="rule"><span>Investigar</span><strong>AUTÔNOMO</strong></div><div class="rule"><span>Preparar código</span><strong>AUTÔNOMO</strong></div><div class="rule"><span>Testar / revisar</span><strong>AUTÔNOMO</strong></div><div class="rule"><span>Abrir PR</span><strong>AUTÔNOMO</strong></div><div class="rule"><span>Alterar produção</span><strong class="block">BLOQUEADO</strong></div><div class="rule"><span>Excluir dados</span><strong class="block">BLOQUEADO</strong></div><div class="rule"><span>Mudar regras/permissões</span><strong class="block">BLOQUEADO</strong></div><div class="rule"><span>Merge / deploy</span><strong class="block">SEU OK</strong></div><div class="rule"><span>Gerar custo</span><strong class="block">BLOQUEADO</strong></div>
+</div></div>
 <div class="sec"><h2>Projetos</h2><div id="projects"></div></div>
-<div class="sec"><h2>Memória</h2><div class="card"><div class="metric"><span>Itens aprendidos</span><b id="memoryCount">0</b></div><div class="s">Nesta versão local, a memória fica no navegador (localStorage).</div><div class="row"><button class="btn" onclick="openMemory()">Adicionar conhecimento</button></div></div></div>
-<div class="sec"><h2>Custo</h2><div class="card"><div class="t">Cost Firewall</div><div class="s">Nenhuma chamada externa é feita neste protótipo.</div><div class="metric"><span>Uso simulado</span><b>0%</b></div><div class="bar"><span style="width:0%"></span></div></div></div>
-<div class="sec"><h2>Aprovações</h2><div id="approvals"></div></div>
-<div class="sec"><h2>Atividade autônoma</h2><div id="events"></div></div>
+<div class="sec"><h2>Memória</h2><div class="card"><div class="t"><span id="memoryCount">0</span> itens aprendidos</div><div class="s">Ainda salva localmente. Firestore será a próxima etapa.</div><div class="row"><button class="btn" onclick="openMemory()">Adicionar conhecimento</button></div></div></div>
+<div class="sec"><h2>Segurança</h2><div class="card"><div class="t">Firebase Authentication</div><div class="s">Google ativo. A interface só é liberada para o e-mail autorizado.</div></div></div>
 </aside>
 </div>
-<div class="modal" id="memoryModal"><div class="box"><h3>Ensinar o Nexus</h3><div class="s">Registre regras de negócio, decisões, preferências técnicas ou fatos confirmados.</div><p><input id="memProject" placeholder="Projeto (ex.: Pronti Pet)" style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:10px"></p><p><select id="memType" style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:10px"><option>regra de negócio</option><option>decisão técnica</option><option>preferência</option><option>fato confirmado</option><option>observação</option></select></p><textarea id="memText" class="full" placeholder="Ex.: Status Finalizado nunca deve voltar para Em Atendimento."></textarea><div class="row"><button class="btn primary" onclick="saveMemory()">Salvar aprendizado</button><button class="btn" onclick="closeMemory()">Cancelar</button></div></div></div>
+
+<div class="modal" id="memoryModal"><div class="box"><h3>Ensinar o Nexus</h3><div class="s">Registre regras de negócio, decisões, preferências técnicas ou fatos confirmados.</div><p><input id="memProject" placeholder="Projeto (ex.: Pronti Pet)"></p><p><select id="memType"><option>regra de negócio</option><option>decisão técnica</option><option>preferência</option><option>fato confirmado</option><option>observação</option></select></p><textarea id="memText" class="full" placeholder="Ex.: Status Finalizado nunca deve voltar para Em Atendimento."></textarea><div class="row"><button class="btn primary" onclick="saveMemory()">Salvar aprendizado</button><button class="btn" onclick="closeMemory()">Cancelar</button></div></div></div>
+
+<script src="./firebase-config.js"></script>
 <script>
-const state={projects:[{id:'pronti-pet',name:'Pronti Pet',stack:'React / Firebase',status:'online'},{id:'pronti',name:'Pronti',stack:'Firebase / Web',status:'online'},{id:'listalar',name:'ListaLar',stack:'PWA / Firebase',status:'online'}],approvals:JSON.parse(localStorage.getItem('nexus_demo_approvals')||'[]'),events:JSON.parse(localStorage.getItem('nexus_demo_events')||'[]'),memory:JSON.parse(localStorage.getItem('nexus_demo_memory')||'[]')};
-function persist(){localStorage.setItem('nexus_demo_approvals',JSON.stringify(state.approvals));localStorage.setItem('nexus_demo_events',JSON.stringify(state.events));localStorage.setItem('nexus_demo_memory',JSON.stringify(state.memory))}
+const state={projects:[{name:'Pronti Pet',stack:'React / Firebase'},{name:'Pronti',stack:'Firebase / Web'},{name:'ListaLar',stack:'PWA / Firebase'}],memory:JSON.parse(localStorage.getItem('nexus_demo_memory')||'[]')};
 function esc(s){return String(s??'').replace(/[&<>\"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[c]||c))}
 function addMsg(role,text){const feed=document.getElementById('feed');const el=document.createElement('div');el.className='msg '+(role==='user'?'user':'assistant');el.innerHTML=`<div class="avatar">${role==='user'?'VC':'NX'}</div><div class="bubble">${esc(text)}</div>`;feed.appendChild(el);feed.scrollTop=feed.scrollHeight}
-function render(){document.getElementById('projects').innerHTML=state.projects.map(p=>`<div class="card"><div class="t">${esc(p.name)}</div><div class="s">${esc(p.stack)}</div><div class="row"><span class="pill ok">● ${esc(p.status)}</span><span class="pill">conexão real: próxima etapa</span></div></div>`).join('');document.getElementById('memoryCount').textContent=state.memory.length;document.getElementById('approvals').innerHTML=state.approvals.length?state.approvals.map((a,i)=>`<div class="card approval"><div class="t">${esc(a.title)}</div><div class="s">${esc(a.detail)}</div><div class="row"><button class="btn primary" onclick="approve(${i})">Aprovar</button><button class="btn danger" onclick="reject(${i})">Recusar</button></div></div>`).join(''):'<div class="s">Nenhuma ação crítica aguardando.</div>';document.getElementById('events').innerHTML=state.events.length?state.events.slice().reverse().slice(0,8).map(e=>`<div class="event"><b>${esc(e.title)}</b><br><small>${esc(e.detail)} · ${esc(e.time)}</small></div>`).join(''):'<div class="s">Nenhum ciclo executado ainda.</div>'}
-function sendMsg(e){e.preventDefault();const box=document.getElementById('input'),text=box.value.trim();if(!text)return;addMsg('user',text);box.value='';const lower=text.toLowerCase();if(lower.includes('excluir')||lower.includes('apagar')||lower.includes('deploy')||lower.includes('merge')||lower.includes('regra')){state.approvals.push({title:'Ação bloqueada por governança',detail:text});persist();render();addMsg('assistant','A solicitação toca uma fronteira protegida. Eu posso investigar e preparar a mudança, mas a execução real exige sua aprovação.');return}if(lower.includes('aprenda')||lower.includes('lembre')||lower.includes('registre')){addMsg('assistant','Abra “Ensinar” para registrar essa informação como memória estruturada. Neste protótipo ela fica salva localmente no navegador.');return}addMsg('assistant','Protótipo local ativo. Eu registraria esta solicitação, consultaria memória e projetos, investigaria em modo somente leitura e prepararia uma ação segura. A conexão real com GitHub/Firebase será a próxima etapa.')}
-function runAutonomy(){const now=new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});[['GitHub','Verificação simulada de alterações recentes concluída. Nenhuma escrita realizada.'],['Firebase','Verificação simulada de saúde concluída em modo somente leitura.'],['Memória','Dossiês reavaliados. Nenhuma informação foi sobrescrita.'],['Governança','Cost Firewall e bloqueios críticos validados.']].forEach(([title,detail])=>state.events.push({title,detail,time:now}));persist();render();addMsg('assistant','Ciclo seguro concluído. Nenhuma alteração, exclusão, deploy, mudança de regra ou chamada paga foi executada.')}
-function approve(i){const a=state.approvals.splice(i,1)[0];state.events.push({title:'Aprovação registrada',detail:a.title,time:new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})});persist();render();addMsg('assistant','Aprovação registrada no protótipo. Nesta versão demonstrativa nenhuma ação externa é executada.')}
-function reject(i){const a=state.approvals.splice(i,1)[0];state.events.push({title:'Ação recusada',detail:a.title,time:new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})});persist();render()}
+function render(){document.getElementById('projects').innerHTML=state.projects.map(p=>`<div class="card"><div class="t">${esc(p.name)}</div><div class="s">${esc(p.stack)}</div><div class="row"><span class="pill ok">● online</span><span class="pill">conexão real: próxima etapa</span></div></div>`).join('');document.getElementById('memoryCount').textContent=state.memory.length}
+function sendMsg(e){e.preventDefault();const box=document.getElementById('input'),text=box.value.trim();if(!text)return;addMsg('user',text);box.value='';addMsg('assistant','Autenticação real está ativa. As integrações externas e a memória em Firestore entram nas próximas etapas, mantendo as travas de governança.')}
+function runAutonomy(){addMsg('assistant','Ciclo seguro simulado concluído. Nenhuma alteração, exclusão, deploy, mudança de regra ou chamada paga foi executada.')}
 function openMemory(){document.getElementById('memoryModal').style.display='grid'}function closeMemory(){document.getElementById('memoryModal').style.display='none'}
-function saveMemory(){const project=document.getElementById('memProject').value.trim(),type=document.getElementById('memType').value,text=document.getElementById('memText').value.trim();if(!text)return;state.memory.push({project,type,text,ts:new Date().toISOString()});persist();render();closeMemory();document.getElementById('memText').value='';addMsg('assistant',`Aprendizado salvo: [${type}] ${project?project+' — ':''}${text}`)}
-addMsg('assistant','Nexus v0.1 em modo de teste local. Esta tela funciona sem Python e sem servidor. Tudo aqui é simulado e nenhuma conexão externa é feita.');render();
+function saveMemory(){const project=document.getElementById('memProject').value.trim(),type=document.getElementById('memType').value,text=document.getElementById('memText').value.trim();if(!text)return;state.memory.push({project,type,text,ts:new Date().toISOString()});localStorage.setItem('nexus_demo_memory',JSON.stringify(state.memory));render();closeMemory();document.getElementById('memText').value='';addMsg('assistant',`Aprendizado salvo localmente: [${type}] ${project?project+' — ':''}${text}`)}
+window.runAutonomy=runAutonomy;window.openMemory=openMemory;window.closeMemory=closeMemory;window.saveMemory=saveMemory;window.sendMsg=sendMsg;
+render();
+</script>
+<script type="module">
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.2.1/firebase-app.js';
+import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/12.2.1/firebase-auth.js';
+
+const AUTHORIZED_EMAIL='giva.norberto@gmail.com';
+const appFirebase=initializeApp(window.NEXUS_FIREBASE_CONFIG);
+const auth=getAuth(appFirebase);
+const provider=new GoogleAuthProvider();
+const gate=document.getElementById('authGate');
+const app=document.getElementById('app');
+const status=document.getElementById('authStatus');
+const loginBtn=document.getElementById('loginBtn');
+const logoutBtn=document.getElementById('logoutBtn');
+const userEmail=document.getElementById('userEmail');
+
+function showGate(message=''){app.classList.add('hidden');gate.classList.remove('hidden');status.textContent=message}
+function showApp(user){gate.classList.add('hidden');app.classList.remove('hidden');userEmail.textContent=user.email||'';if(!document.getElementById('feed').children.length){addMsg('assistant','Acesso autenticado. Nexus v0.2 online com Firebase Authentication ativo.') }}
+
+loginBtn.addEventListener('click',async()=>{status.textContent='Abrindo login Google...';try{await signInWithPopup(auth,provider)}catch(err){status.textContent='Falha no login: '+(err?.message||'erro desconhecido')}});
+logoutBtn.addEventListener('click',async()=>{await signOut(auth);showGate('Sessão encerrada.')});
+
+onAuthStateChanged(auth,async user=>{
+  if(!user){showGate();return}
+  const email=(user.email||'').toLowerCase();
+  if(email!==AUTHORIZED_EMAIL){await signOut(auth);showGate('Acesso negado para '+email+'. Use a conta autorizada.');return}
+  showApp(user);
+});
 </script>
 </body>
 </html>
