@@ -2,6 +2,7 @@ const { onCall, HttpsError } = require('firebase-functions/v2/https');
 const { defineSecret } = require('firebase-functions/params');
 const { getFirestore, FieldValue } = require('firebase-admin/firestore');
 const { getStorage } = require('firebase-admin/storage');
+const { createHash } = require('crypto');
 
 const groqApiKey = defineSecret('GROQ_API_KEY');
 const AUTHORIZED_EMAIL = 'giva.norberto@gmail.com';
@@ -9,6 +10,7 @@ const MODEL_ID = 'openai/gpt-oss-120b';
 const MAX_MESSAGES = 120;
 const MAX_CONVERSATION_CHARS = 100000;
 const MAX_MEMORY_TEXT_CHARS = 5000;
+const MAX_MEMORY_CHECK_ITEMS = 100;
 
 function assertAuthorized(request) {
   const email = String(request.auth?.token?.email || '').toLowerCase();
@@ -46,6 +48,28 @@ function inferProject(text) {
 
 function slugify(value) {
   return String(value || 'geral').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'geral';
+}
+
+function normalizeMemoryText(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function memoryFingerprint(value) {
+  return createHash('sha256').update(normalizeMemoryText(value), 'utf8').digest('hex');
+}
+
+function similarityScore(a, b) {
+  const aa = new Set(normalizeMemoryText(a).split(/[^a-z0-9]+/).filter((token) => token.length >= 3));
+  const bb = new Set(normalizeMemoryText(b).split(/[^a-z0-9]+/).filter((token) => token.length >= 3));
+  if (!aa.size || !bb.size) return 0;
+  let common = 0;
+  for (const token of aa) if (bb.has(token)) common += 1;
+  return common / Math.max(aa.size, bb.size);
 }
 
 async function askJson(system, user, maxTokens = 500) {
@@ -123,21 +147,74 @@ exports.saveMemoryCommand = onCall({
   if (!text) throw new HttpsError('invalid-argument', 'Informe a informação que deve ser guardada.');
 
   const classification = await askJson(
-    'Classifique uma memória explícita do usuário para o Nexus. Retorne somente JSON válido com: project, type, text. project deve ser Nexus, Pronti Pet, Pronti, ListaLar, Semear ou Geral. type deve ser: regra de negócio, decisão técnica, preferência, fato confirmado ou observação. Preserve o fato sem inventar detalhes.',
+    'Classifique uma memória explícita do usuário para o Nexus. Retorne somente JSON válido com: project e type. project deve ser Nexus, Pronti Pet, Pronti, ListaLar, Semear ou Geral. type deve ser: regra de negócio, decisão técnica, preferência, fato confirmado ou observação. Não reescreva nem resuma o conteúdo do usuário.',
     text,
-    300
+    220
   );
 
   const allowedProjects = new Set(['Nexus', 'Pronti Pet', 'Pronti', 'ListaLar', 'Semear', 'Geral']);
   const allowedTypes = new Set(['regra de negócio', 'decisão técnica', 'preferência', 'fato confirmado', 'observação']);
   const project = allowedProjects.has(String(classification?.project || '')) ? String(classification.project) : inferProject(text);
   const type = allowedTypes.has(String(classification?.type || '')) ? String(classification.type) : 'fato confirmado';
-  const memoryText = String(classification?.text || text).trim().slice(0, MAX_MEMORY_TEXT_CHARS);
+  const fingerprint = memoryFingerprint(text);
+  const db = getFirestore();
 
-  const ref = await getFirestore().collection('memory').add({
-    project, type, text: memoryText, source: 'explicit-command',
-    createdBy: request.auth.token.email, createdAt: FieldValue.serverTimestamp()
+  const duplicate = await db.collection('memory').where('fingerprint', '==', fingerprint).limit(1).get();
+  if (!duplicate.empty) {
+    const doc = duplicate.docs[0];
+    const data = doc.data();
+    return { saved: true, alreadyExisted: true, id: doc.id, project: data.project || project, type: data.type || type, text: data.text || text };
+  }
+
+  const ref = await db.collection('memory').add({
+    project,
+    type,
+    text,
+    fingerprint,
+    source: 'explicit-command',
+    createdBy: request.auth.token.email,
+    createdAt: FieldValue.serverTimestamp()
   });
 
-  return { saved: true, id: ref.id, project, type, text: memoryText };
+  return { saved: true, alreadyExisted: false, id: ref.id, project, type, text };
+});
+
+exports.checkMemoryCommand = onCall({
+  region: 'southamerica-east1', maxInstances: 1, timeoutSeconds: 20, memory: '256MiB'
+}, async (request) => {
+  assertAuthorized(request);
+  const text = String(request.data?.text || '').trim().slice(0, MAX_MEMORY_TEXT_CHARS);
+  if (!text) throw new HttpsError('invalid-argument', 'Informe a informação que deve ser verificada.');
+
+  const db = getFirestore();
+  const fingerprint = memoryFingerprint(text);
+  const exact = await db.collection('memory').where('fingerprint', '==', fingerprint).limit(1).get();
+  if (!exact.empty) {
+    const doc = exact.docs[0];
+    const data = doc.data();
+    return { found: true, exact: true, id: doc.id, project: data.project || '', type: data.type || '', text: data.text || '' };
+  }
+
+  const snapshot = await db.collection('memory').orderBy('createdAt', 'desc').limit(MAX_MEMORY_CHECK_ITEMS).get();
+  let best = null;
+  for (const doc of snapshot.docs) {
+    const data = doc.data();
+    const candidateText = String(data.text || '');
+    const score = similarityScore(text, candidateText);
+    if (!best || score > best.score) best = { doc, data, score };
+  }
+
+  if (best && best.score >= 0.88) {
+    return {
+      found: true,
+      exact: false,
+      id: best.doc.id,
+      project: best.data.project || '',
+      type: best.data.type || '',
+      text: best.data.text || '',
+      similarity: best.score
+    };
+  }
+
+  return { found: false };
 });
