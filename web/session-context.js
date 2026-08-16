@@ -13,6 +13,9 @@
   const MEMORY_STATUS_RE = /^(?:nexus[, ]*)?(?:voce\s+)?(?:salvou|guardou|lembrou|registrou)\s+(?:esta|essa|isso|disto|disso)?\s*(?:informacao|memoria|mensagem)?\s*[?!.,]*$/i;
   const MEMORY_STATUS_ALT_RE = /^(?:nexus[, ]*)?(?:esta|essa|isso)\s+(?:ficou|esta)\s+(?:salvo|salva|guardado|guardada|registrado|registrada)(?:\s+(?:na|no)\s+(?:memoria|firestore|firebase))?\s*[?!.,]*$/i;
 
+  const normalize = (value) => String(value || '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+
   const getContext = () => ({
     key: sessionStorage.getItem('nexusActiveProjectKey') || '',
     name: sessionStorage.getItem('nexusActiveProjectName') || '',
@@ -58,21 +61,89 @@
     return `${contextLine}. Continue a investigação nesse contexto, reabrindo os arquivos necessários no GitHub.\n\n${original}`;
   };
 
+  let firebaseStatusCallablePromise = null;
+  const getFirebaseStatusCallable = async () => {
+    if (!firebaseStatusCallablePromise) {
+      firebaseStatusCallablePromise = (async () => {
+        const [{ getApps }, { getFunctions, httpsCallable }] = await Promise.all([
+          import('https://www.gstatic.com/firebasejs/12.2.1/firebase-app.js'),
+          import('https://www.gstatic.com/firebasejs/12.2.1/firebase-functions.js')
+        ]);
+        let apps = getApps();
+        for (let i = 0; !apps.length && i < 30; i += 1) {
+          await new Promise((resolve) => setTimeout(resolve, 100));
+          apps = getApps();
+        }
+        if (!apps.length) throw new Error('Firebase ainda não inicializado.');
+        return httpsCallable(getFunctions(apps[0], 'southamerica-east1'), 'firebaseProjectStatus');
+      })();
+    }
+    return firebaseStatusCallablePromise;
+  };
+
+  const isListaLarOperationalQuery = (prompt) => {
+    const text = normalize(prompt);
+    const context = getContext();
+    const mentionsListaLar = /\blistalar\b|\blista lar\b|\bcompras-da-casa\b/.test(text) || context.key === 'listalar';
+    const operational = /usuario|usuarios|cadastrad|firebase|authentication|\bauth\b|firestore|colecao|colecoes|status|saude|quantos|acessos|login/.test(text);
+    return mentionsListaLar && operational;
+  };
+
+  const formatFirebaseOperationalAnswer = (status, prompt) => {
+    const text = normalize(prompt);
+    const auth = status?.auth;
+    const firestore = status?.firestore;
+    const errors = Array.isArray(status?.errors) ? status.errors : [];
+
+    if (/quantos|usuario|usuarios|cadastrad/.test(text) && auth) {
+      const suffix = auth.truncated ? ' (contagem limitada ao teto de segurança)' : '';
+      return {
+        answer: `ListaLar tem ${auth.totalUsers}${suffix} usuário(s) cadastrado(s) no Firebase Authentication. Ativos: ${auth.enabledUsers}. Desativados: ${auth.disabledUsers}. E-mails verificados: ${auth.emailVerifiedUsers}. Usuários com login nos últimos 30 dias: ${auth.recentSignIns30d}.`,
+        firebaseOperational: true,
+        status
+      };
+    }
+
+    const lines = [
+      `Status operacional confirmado do ListaLar (${status?.projectId || 'compras-da-casa'}):`,
+      auth ? `• Authentication: ${auth.totalUsers}${auth.truncated ? '+' : ''} usuários; ${auth.enabledUsers} ativos; ${auth.disabledUsers} desativados; ${auth.recentSignIns30d} com login nos últimos 30 dias.` : '• Authentication: leitura indisponível.',
+      firestore ? `• Firestore: ${firestore.rootCollectionCount} coleções raiz${firestore.rootCollections?.length ? ` — ${firestore.rootCollections.join(', ')}` : ''}.` : '• Firestore: leitura indisponível.',
+      '• Modo do Nexus: somente leitura; nenhuma alteração foi executada.'
+    ];
+    if (errors.length) lines.push(`• Pendências de permissão/leitura: ${errors.map((item) => item.area).join(', ')}.`);
+    return { answer: lines.join('\n'), firebaseOperational: true, status };
+  };
+
   let rawAsk = null;
   Object.defineProperty(window, 'nexusAsk', {
     configurable: true,
     enumerable: true,
     get() {
       if (typeof rawAsk !== 'function') return undefined;
-      return async (prompt) => rawAsk(augmentPrompt(prompt));
+      return async (prompt) => {
+        const project = detectProject(String(prompt || ''));
+        if (project) setProject(project);
+        if (isListaLarOperationalQuery(prompt)) {
+          try {
+            const firebaseStatus = await getFirebaseStatusCallable();
+            const result = await firebaseStatus({ project: 'listalar' });
+            return formatFirebaseOperationalAnswer(result?.data || {}, prompt);
+          } catch (error) {
+            console.error('Nexus Firebase operational query failed', error);
+            return {
+              answer: 'O Nexus tentou consultar os dados reais do Firebase do ListaLar, mas a leitura operacional foi recusada ou ainda não está autorizada. Nenhum dado foi alterado. Verifique as permissões IAM somente leitura do projeto compras-da-casa.',
+              firebaseOperational: true,
+              error: true
+            };
+          }
+        }
+        return rawAsk(augmentPrompt(prompt));
+      };
     },
     set(fn) {
       rawAsk = fn;
     }
   });
-
-  const normalize = (value) => String(value || '')
-    .normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
 
   const previousUserMessage = () => {
     const feed = document.getElementById('feed');
