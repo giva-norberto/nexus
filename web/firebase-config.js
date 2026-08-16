@@ -14,9 +14,26 @@ window.addEventListener('DOMContentLoaded', () => {
   const header = document.querySelector('header');
   const app = document.getElementById('app');
 
-  // Rolagem automática do chat.
+  // Interface mais limpa: não exibe detalhes técnicos de autenticação ao usuário.
+  if (header) {
+    const authBadge = [...header.querySelectorAll('.badge')]
+      .find((badge) => badge.textContent.includes('ONLINE / AUTH'));
+    if (authBadge) authBadge.textContent = '● ONLINE';
+  }
+
+  // Rolagem automática do chat e remoção da mensagem técnica de autenticação.
   if (feed) {
+    const cleanupTechnicalGreeting = () => {
+      for (const message of feed.querySelectorAll('.msg.assistant')) {
+        const bubble = message.querySelector('.bubble');
+        if (bubble && bubble.textContent.trim().startsWith('Acesso autenticado.')) {
+          message.remove();
+        }
+      }
+    };
+
     const scrollToLatest = () => {
+      cleanupTechnicalGreeting();
       requestAnimationFrame(() => {
         feed.scrollTo({ top: feed.scrollHeight, behavior: 'smooth' });
       });
