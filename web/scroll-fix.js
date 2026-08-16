@@ -1,55 +1,119 @@
-// Ajuste de rolagem do chat do Nexus.
+// Rolagem automática e layout responsivo do chat Nexus.
 window.addEventListener('DOMContentLoaded', () => {
   const feed = document.getElementById('feed');
   const main = document.querySelector('main');
   const composer = document.getElementById('composer');
-  if (!feed || !main) return;
+  const input = document.getElementById('input');
+  const aside = document.querySelector('aside');
+  if (!feed || !main || !composer) return;
 
   const style = document.createElement('style');
   style.textContent = `
-    html,body{height:100%;overflow:hidden!important}
-    #app{height:100dvh!important;min-height:0!important;overflow:hidden!important}
-    main{height:100dvh!important;min-height:0!important;overflow:hidden!important}
-    header{flex:0 0 auto!important}
-    #feed{flex:1 1 auto!important;min-height:0!important;overflow-y:auto!important;overscroll-behavior:contain;scroll-behavior:auto!important}
-    #composer{flex:0 0 auto!important;position:relative!important;bottom:auto!important}
-    @media(max-width:760px){#feed{padding-bottom:18px!important}}
+    :root{--nexus-vh:100dvh}
+    html,body{height:100%;max-height:100%;overflow:hidden!important}
+    body{overscroll-behavior:none}
+    #app{height:var(--nexus-vh)!important;min-height:0!important;overflow:hidden!important}
+    main{height:var(--nexus-vh)!important;min-height:0!important;overflow:hidden!important;display:flex!important;flex-direction:column!important}
+    header{flex:0 0 auto!important;position:relative!important;top:auto!important}
+    #feed{flex:1 1 0!important;min-height:0!important;overflow-y:auto!important;overflow-x:hidden!important;overscroll-behavior:contain;scroll-behavior:auto!important;-webkit-overflow-scrolling:touch}
+    #composer{flex:0 0 auto!important;position:relative!important;bottom:auto!important;z-index:3}
+    #input{font-size:16px}
+    @media(max-width:760px){
+      #app,main{height:var(--nexus-vh)!important}
+      header{min-height:52px!important;padding:8px 9px!important;overflow-x:auto!important;scrollbar-width:none}
+      header::-webkit-scrollbar{display:none}
+      #feed{padding:12px 9px 12px!important;gap:11px!important}
+      .msg{max-width:98%!important;gap:7px!important}
+      .avatar{width:26px!important;height:26px!important;flex-basis:26px!important;font-size:9px!important}
+      .bubble{padding:10px 11px!important;border-radius:11px!important}
+      #composer{padding:8px max(8px,env(safe-area-inset-right)) calc(8px + env(safe-area-inset-bottom)) max(8px,env(safe-area-inset-left))!important;gap:7px!important}
+      #input{min-height:46px!important;max-height:34vh!important;line-height:1.35!important;padding:11px 12px!important}
+      #sendBtn{min-width:66px!important;min-height:46px!important;padding:8px 11px!important}
+      .btn{min-height:42px}
+      aside{width:100vw!important;max-width:100vw!important;height:var(--nexus-vh)!important;max-height:var(--nexus-vh)!important;padding-bottom:env(safe-area-inset-bottom)!important}
+      .modal{padding:10px!important}
+      .modal .box{width:100%!important;max-height:calc(var(--nexus-vh) - 20px)!important}
+    }
   `;
   document.head.appendChild(style);
 
-  let userReadingHistory = false;
-  const nearBottom = () => feed.scrollHeight - feed.scrollTop - feed.clientHeight < 140;
+  const setViewportHeight = () => {
+    const height = window.visualViewport?.height || window.innerHeight;
+    document.documentElement.style.setProperty('--nexus-vh', `${Math.round(height)}px`);
+  };
 
-  const goBottom = (force = false) => {
-    if (!force && userReadingHistory) return;
+  let scrollTimers = [];
+  const cancelScrollTimers = () => {
+    scrollTimers.forEach(clearTimeout);
+    scrollTimers = [];
+  };
+
+  const goBottomNow = () => {
+    feed.scrollTop = feed.scrollHeight;
+  };
+
+  const settleAtBottom = () => {
+    cancelScrollTimers();
+    goBottomNow();
     requestAnimationFrame(() => {
-      feed.scrollTop = feed.scrollHeight;
-      requestAnimationFrame(() => { feed.scrollTop = feed.scrollHeight; });
+      goBottomNow();
+      requestAnimationFrame(goBottomNow);
+    });
+    [40, 120, 260, 520].forEach((delay) => {
+      scrollTimers.push(setTimeout(goBottomNow, delay));
     });
   };
 
-  feed.addEventListener('scroll', () => {
-    userReadingHistory = !nearBottom();
-  }, { passive: true });
+  window.nexusScrollToBottom = settleAtBottom;
 
   const observer = new MutationObserver((mutations) => {
-    const addedMessage = mutations.some((mutation) =>
-      [...mutation.addedNodes].some((node) => node.nodeType === 1 && (node.matches?.('.msg') || node.querySelector?.('.msg')))
+    const relevant = mutations.some((mutation) =>
+      mutation.type === 'characterData' || mutation.addedNodes.length > 0
     );
-    if (addedMessage) {
-      userReadingHistory = false;
-      goBottom(true);
-    }
+    if (relevant) settleAtBottom();
   });
-  observer.observe(feed, { childList: true, subtree: true });
+  observer.observe(feed, { childList: true, subtree: true, characterData: true });
 
-  if (composer) {
-    composer.addEventListener('submit', () => {
-      userReadingHistory = false;
-      setTimeout(() => goBottom(true), 0);
-    });
+  const resizeObserver = new ResizeObserver(() => settleAtBottom());
+  resizeObserver.observe(feed);
+  resizeObserver.observe(composer);
+
+  composer.addEventListener('submit', () => {
+    setTimeout(settleAtBottom, 0);
+  }, true);
+
+  if (input) {
+    const resizeInput = () => {
+      input.style.height = 'auto';
+      const max = Math.max(150, Math.floor((window.visualViewport?.height || window.innerHeight) * 0.34));
+      input.style.height = `${Math.min(input.scrollHeight, max)}px`;
+      settleAtBottom();
+    };
+    input.addEventListener('input', resizeInput);
+    input.addEventListener('focus', () => setTimeout(settleAtBottom, 120));
+    input.addEventListener('blur', () => setTimeout(settleAtBottom, 80));
   }
 
-  window.addEventListener('resize', () => goBottom(false));
-  goBottom(true);
+  window.addEventListener('resize', () => {
+    setViewportHeight();
+    settleAtBottom();
+  });
+
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', () => {
+      setViewportHeight();
+      settleAtBottom();
+    });
+    window.visualViewport.addEventListener('scroll', settleAtBottom);
+  }
+
+  window.addEventListener('orientationchange', () => {
+    setTimeout(() => {
+      setViewportHeight();
+      settleAtBottom();
+    }, 180);
+  });
+
+  setViewportHeight();
+  settleAtBottom();
 });

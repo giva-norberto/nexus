@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Nexus</title>
 <style>
 :root{--bg:#090b10;--panel:#121722;--panel2:#171e2b;--line:#263044;--text:#edf2ff;--muted:#93a0b7;--accent:#7da2ff;--ok:#37d39a;--warn:#f3b74a;--err:#ff6178}
@@ -60,11 +60,13 @@ aside{border-left:1px solid var(--line);background:var(--panel);overflow:auto;ma
 <div class="modal" id="memoryModal"><div class="box"><h3>Ensinar o Nexus</h3><div class="s">Registre regras de negócio, decisões, preferências técnicas ou fatos confirmados.</div><p><input id="memProject" placeholder="Projeto (ex.: Pronti Pet)"></p><p><select id="memType"><option>regra de negócio</option><option>decisão técnica</option><option>preferência</option><option>fato confirmado</option><option>observação</option></select></p><textarea id="memText" class="full" placeholder="Ex.: Status Finalizado nunca deve voltar para Em Atendimento."></textarea><div class="row"><button id="saveMemoryBtn" class="btn primary" onclick="saveMemory()">Salvar aprendizado</button><button class="btn" onclick="closeMemory()">Cancelar</button></div></div></div>
 
 <script src="./firebase-config.js"></script>
+<script src="./session-context.js"></script>
+<script src="./scroll-fix.js"></script>
 <script>
 const state={projects:[{name:'Pronti Pet',stack:'React / Firebase'},{name:'Pronti',stack:'Firebase / Web'},{name:'ListaLar',stack:'PWA / Firebase'}],memory:[]};
 window.NEXUS_STATE=state;
 function esc(s){return String(s??'').replace(/[&<>\"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[c]||c))}
-function addMsg(role,text){const feed=document.getElementById('feed');const el=document.createElement('div');el.className='msg '+(role==='user'?'user':'assistant');el.innerHTML=`<div class="avatar">${role==='user'?'VC':'NX'}</div><div class="bubble">${esc(text)}</div>`;feed.appendChild(el);feed.scrollTop=feed.scrollHeight}
+function addMsg(role,text){const feed=document.getElementById('feed');const el=document.createElement('div');el.className='msg '+(role==='user'?'user':'assistant');el.innerHTML=`<div class="avatar">${role==='user'?'VC':'NX'}</div><div class="bubble">${esc(text)}</div>`;feed.appendChild(el);feed.scrollTop=feed.scrollHeight;if(typeof window.nexusScrollToBottom==='function')window.nexusScrollToBottom()}
 function render(){document.getElementById('projects').innerHTML=state.projects.map(p=>`<div class="card"><div class="t">${esc(p.name)}</div><div class="s">${esc(p.stack)}</div><div class="row"><span class="pill ok">● online</span><span class="pill">conexão do repositório: próxima etapa</span></div></div>`).join('');document.getElementById('memoryCount').textContent=state.memory.length}
 async function sendMsg(e){
   e.preventDefault();
@@ -94,6 +96,7 @@ async function sendMsg(e){
     box.disabled=false;
     btn.textContent='Enviar';
     box.focus();
+    if(typeof window.nexusScrollToBottom==='function')window.nexusScrollToBottom();
   }
 }
 function runAutonomy(){addMsg('assistant','Ciclo seguro simulado concluído. Nenhuma alteração, exclusão, deploy, mudança de regra ou chamada paga foi executada.')}
