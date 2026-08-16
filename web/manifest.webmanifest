@@ -1,0 +1,19 @@
+{
+  "name": "Nexus",
+  "short_name": "Nexus",
+  "description": "Assistente técnico Nexus para projetos e operação segura.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#090b10",
+  "theme_color": "#121722",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "./nexus-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
