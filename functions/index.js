@@ -5,9 +5,9 @@ const { getFirestore } = require('firebase-admin/firestore');
 
 initializeApp();
 
-const githubModelsToken = defineSecret('GITHUB_MODELS_TOKEN');
+const groqApiKey = defineSecret('GROQ_API_KEY');
 const AUTHORIZED_EMAIL = 'giva.norberto@gmail.com';
-const MODEL_ID = 'openai/gpt-4.1-mini';
+const MODEL_ID = 'openai/gpt-oss-120b';
 const MAX_PROMPT_CHARS = 4000;
 const MAX_MEMORY_ITEMS = 20;
 const MAX_OUTPUT_TOKENS = 800;
@@ -15,7 +15,7 @@ const MAX_OUTPUT_TOKENS = 800;
 exports.askNexus = onCall(
   {
     region: 'southamerica-east1',
-    secrets: [githubModelsToken],
+    secrets: [groqApiKey],
     maxInstances: 1,
     timeoutSeconds: 60,
     memory: '256MiB'
@@ -65,13 +65,11 @@ exports.askNexus = onCall(
       'Se a solicitação exigir dados externos ainda não conectados, diga exatamente qual acesso está faltando.'
     ].join(' ');
 
-    const response = await fetch('https://models.github.ai/inference/chat/completions', {
+    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
       headers: {
-        Accept: 'application/vnd.github+json',
-        Authorization: `Bearer ${githubModelsToken.value()}`,
-        'Content-Type': 'application/json',
-        'X-GitHub-Api-Version': '2026-03-10'
+        Authorization: `Bearer ${groqApiKey.value()}`,
+        'Content-Type': 'application/json'
       },
       body: JSON.stringify({
         model: MODEL_ID,
@@ -83,21 +81,21 @@ exports.askNexus = onCall(
           }
         ],
         temperature: 0.2,
-        max_tokens: MAX_OUTPUT_TOKENS,
+        max_completion_tokens: MAX_OUTPUT_TOKENS,
         stream: false
       })
     });
 
     if (!response.ok) {
       const detail = (await response.text()).slice(0, 1000);
-      console.error('GitHub Models error', response.status, detail);
+      console.error('Groq error', response.status, detail);
       if (response.status === 429) {
-        throw new HttpsError('resource-exhausted', 'Limite gratuito do GitHub Models atingido. Tente novamente mais tarde.');
+        throw new HttpsError('resource-exhausted', 'Limite de uso do Groq atingido. Tente novamente mais tarde.');
       }
       if (response.status === 401 || response.status === 403) {
-        throw new HttpsError('failed-precondition', 'Credencial do GitHub Models recusada.');
+        throw new HttpsError('failed-precondition', 'Credencial do Groq recusada.');
       }
-      throw new HttpsError('internal', 'Falha ao consultar o GitHub Models.');
+      throw new HttpsError('internal', 'Falha ao consultar o Groq.');
     }
 
     const payload = await response.json();
@@ -108,6 +106,7 @@ exports.askNexus = onCall(
 
     return {
       answer,
+      provider: 'Groq',
       model: MODEL_ID,
       memoryItemsUsed: memories.length
     };
