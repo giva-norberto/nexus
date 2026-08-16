@@ -146,17 +146,41 @@ window.addEventListener('DOMContentLoaded', () => {
     }).filter((item) => item.text && !item.text.startsWith('Acesso autenticado.'));
   };
 
-  const getPreviousUserMessage = (currentNormalized = '') => {
+  const isMemoryCommandText = (text) => /^(salve|salvar|save|guarde|guardar|lembre)/.test(normalizeCommand(text));
+
+  const getPreviousUserMessage = (currentNormalized = '', subject = '') => {
     const messages = collectConversation();
     for (let i = messages.length - 1; i >= 0; i -= 1) {
       const item = messages[i];
       if (item.role !== 'user') continue;
       const normalizedItem = normalizeCommand(item.text);
-      if (!normalizedItem || normalizedItem === currentNormalized) continue;
-      if (/^(salve|salvar|guarde|guardar|lembre)/.test(normalizedItem)) continue;
+      if (!normalizedItem || normalizedItem === currentNormalized || isMemoryCommandText(normalizedItem)) continue;
+      if (subject === 'nome' && !/\bnome\b|me chame|pode me chamar/.test(normalizedItem)) continue;
       return item.text;
     }
     return '';
+  };
+
+  const memorySubjectPrompt = (subject) => {
+    const prompts = {
+      nome: 'Qual é o seu nome e como você prefere que eu te chame?',
+      cidade: 'Qual cidade você quer que eu guarde?',
+      telefone: 'Qual telefone você quer que eu guarde?',
+      email: 'Qual e-mail você quer que eu guarde?',
+      aniversario: 'Qual data de aniversário você quer que eu guarde?'
+    };
+    return prompts[subject] || 'Qual informação você quer que eu guarde?';
+  };
+
+  const decorateSubjectMemory = (subject, value) => {
+    const labels = {
+      nome: 'Nome do usuário',
+      cidade: 'Cidade do usuário',
+      telefone: 'Telefone do usuário',
+      email: 'E-mail do usuário',
+      aniversario: 'Aniversário do usuário'
+    };
+    return subject && labels[subject] ? `${labels[subject]}: ${value}` : value;
   };
 
   let callablesPromise = null;
@@ -206,12 +230,14 @@ window.addEventListener('DOMContentLoaded', () => {
       const rawText = input?.value?.trim() || '';
       const normalized = normalizeCommand(rawText);
       const pendingMemory = sessionStorage.getItem('nexusPendingMemory') === '1';
+      const pendingSubject = sessionStorage.getItem('nexusPendingMemorySubject') || '';
 
-      const isSaveConversation = /\b(salve|salvar|guarde|guardar)\b.*\b(conversa|chat)\b/.test(normalized);
-      const isMemoryStart = /^(nexus[, ]*)?(guardar|guarde|salvar|salve)\s+(uma\s+)?(informacao|memoria)\s*[:.!]?\s*$/.test(normalized);
-      const isPreviousMemoryReference = /^(nexus[, ]*)?(salve|salvar|guarde|guardar|lembre)\s+(esta|essa|isso|disto|disso)?\s*(informacao|memoria|mensagem)?\s*(anterior)?\s*[.!]?\s*$/.test(normalized)
-        || /^(nexus[, ]*)?(salve|salvar|guarde|guardar|lembre)\s+(isso|disso|disto)\s*[.!]?\s*$/.test(normalized);
-      const directMemoryMatch = normalized.match(/^(?:nexus[, ]*)?(?:guarde|guardar|lembre|salve na memoria|salvar na memoria)(?:\s+(?:que|informacao|isso))?\s*[:,-]?\s+(.+)$/);
+      const isSaveConversation = /\b(salve|salvar|save|guarde|guardar)\b.*\b(conversa|chat)\b/.test(normalized);
+      const isMemoryStart = /^(nexus[, ]*)?(guardar|guarde|salvar|salve|save)\s+(uma\s+)?(informacao|memoria)\s*[:.!]?\s*$/.test(normalized);
+      const isPreviousMemoryReference = /^(nexus[, ]*)?(salve|salvar|save|guarde|guardar|lembre)\s+(esta|essa|isso|disto|disso)?\s*(informacao|memoria|mensagem)?\s*(anterior)?\s*[.!]?\s*$/.test(normalized)
+        || /^(nexus[, ]*)?(salve|salvar|save|guarde|guardar|lembre)\s+(isso|disso|disto)\s*[.!]?\s*$/.test(normalized);
+      const subjectRequest = normalized.match(/^(?:nexus[, ]*)?(?:salve|salvar|save|guarde|guardar|lembre)\s+(?:o\s+|a\s+)?(?:meu|minha)\s+(nome|cidade|telefone|email|e-mail|aniversario)\s*[.!]?$/);
+      const directMemoryMatch = normalized.match(/^(?:nexus[, ]*)?(?:guarde|guardar|lembre|salve na memoria|salvar na memoria|save)(?:\s+(?:que|informacao|isso))?\s*[:,-]?\s+(.+)$/);
 
       if (isSaveConversation) {
         event?.preventDefault?.();
@@ -236,11 +262,34 @@ window.addEventListener('DOMContentLoaded', () => {
         return;
       }
 
+      if (subjectRequest) {
+        event?.preventDefault?.();
+        const subject = subjectRequest[1] === 'e-mail' ? 'email' : subjectRequest[1];
+        const previousText = getPreviousUserMessage(normalized, subject);
+        addLocalMessage('user', rawText);
+        if (input) input.value = '';
+        if (previousText) {
+          try {
+            const saved = await saveExplicitMemory(previousText);
+            addLocalMessage('assistant', `Informação guardada com confirmação do Firestore: [${saved.type}] ${saved.project ? `${saved.project} — ` : ''}${saved.text}`);
+          } catch (error) {
+            console.error(error);
+            addLocalMessage('assistant', 'Não consegui confirmar o salvamento. A informação não será tratada como memória persistente.');
+          }
+          return;
+        }
+        sessionStorage.setItem('nexusPendingMemory', '1');
+        sessionStorage.setItem('nexusPendingMemorySubject', subject);
+        addLocalMessage('assistant', memorySubjectPrompt(subject));
+        return;
+      }
+
       if (isMemoryStart) {
         event?.preventDefault?.();
         addLocalMessage('user', rawText);
         if (input) input.value = '';
         sessionStorage.setItem('nexusPendingMemory', '1');
+        sessionStorage.removeItem('nexusPendingMemorySubject');
         addLocalMessage('assistant', 'Qual informação você quer que eu guarde?');
         return;
       }
@@ -264,12 +313,13 @@ window.addEventListener('DOMContentLoaded', () => {
         return;
       }
 
-      const memoryText = pendingMemory ? rawText : directMemoryMatch?.[1];
+      const memoryText = pendingMemory ? decorateSubjectMemory(pendingSubject, rawText) : directMemoryMatch?.[1];
       if (memoryText) {
         event?.preventDefault?.();
         addLocalMessage('user', rawText);
         if (input) input.value = '';
         sessionStorage.removeItem('nexusPendingMemory');
+        sessionStorage.removeItem('nexusPendingMemorySubject');
         try {
           const saved = await saveExplicitMemory(memoryText);
           addLocalMessage('assistant', `Informação guardada com confirmação do Firestore: [${saved.type}] ${saved.project ? `${saved.project} — ` : ''}${saved.text}`);
