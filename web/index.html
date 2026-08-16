@@ -12,7 +12,7 @@
 .btn{border:1px solid var(--line);background:var(--panel2);color:var(--text);border-radius:9px;padding:9px 12px}.btn:hover{border-color:var(--accent)}.btn.primary{background:var(--accent);color:#08101f;border-color:var(--accent);font-weight:700}.btn.danger{color:var(--err)}.btn:disabled{opacity:.55;cursor:not-allowed}
 #app{min-height:100vh;display:grid;grid-template-columns:1fr 360px}main{min-width:0;display:flex;flex-direction:column;min-height:100vh}header{display:flex;align-items:center;gap:10px;padding:12px 18px;border-bottom:1px solid var(--line);background:var(--panel);position:sticky;top:0;z-index:2}.badge,.pill{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:999px;padding:3px 8px;font-size:11px;color:var(--muted)}.badge.ok,.pill.ok{color:var(--ok);border-color:#225844}.spacer{flex:1}.userTag{font-size:12px;color:var(--muted)}
 #feed{flex:1;overflow:auto;padding:22px;display:flex;flex-direction:column;gap:14px}.msg{max-width:860px;display:flex;gap:10px}.msg.user{align-self:flex-end;flex-direction:row-reverse}.avatar{width:30px;height:30px;border-radius:8px;display:grid;place-items:center;font-size:10px;font-weight:800;flex:0 0 30px;background:linear-gradient(135deg,#4f46e5,#7da2ff)}.msg.user .avatar{background:var(--panel2);color:var(--muted)}.bubble{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:11px 14px;white-space:pre-wrap;overflow-wrap:anywhere}.msg.user .bubble{background:var(--panel2)}
-#composer{display:flex;gap:10px;padding:14px 18px;border-top:1px solid var(--line);background:var(--panel);position:sticky;bottom:0}#input{flex:1;resize:none;min-height:44px;max-height:150px;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:11px 13px;outline:none}
+#composer{display:flex;gap:10px;padding:14px 18px;border-top:1px solid var(--line);background:var(--panel);position:sticky;bottom:0;align-items:stretch}.composerField{flex:1;display:flex;flex-direction:column;gap:5px}#input{width:100%;flex:1;resize:none;min-height:44px;max-height:150px;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:11px 13px;outline:none}.composerHint{font-size:11px;color:var(--muted);padding-left:4px}
 aside{border-left:1px solid var(--line);background:var(--panel);overflow:auto;max-height:100vh;position:sticky;top:0}.sec{padding:14px 15px;border-bottom:1px solid var(--line)}.sec h2{font-size:10px;text-transform:uppercase;letter-spacing:.15em;color:var(--muted);margin:0 0 10px}.card{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 11px;margin-bottom:8px}.t{font-weight:700}.s{color:var(--muted);font-size:12px;margin-top:3px}.row{display:flex;gap:7px;flex-wrap:wrap;margin-top:8px}.rule{display:flex;justify-content:space-between;gap:10px;font-size:12px;padding:4px 0}.rule strong{color:var(--ok)}.rule strong.block{color:var(--err)}
 .modal{position:fixed;inset:0;background:rgba(0,0,0,.72);display:none;place-items:center;z-index:10;padding:20px}.modal .box{width:min(720px,96vw);max-height:90vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px}.full,input,select{width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:10px}.full{min-height:160px}
 @media(max-width:980px){#app{grid-template-columns:1fr}aside{position:static;max-height:none;border-left:0;border-top:1px solid var(--line)}}
@@ -35,8 +35,8 @@ aside{border-left:1px solid var(--line);background:var(--panel);overflow:auto;ma
   <span class="brand">NEXUS</span>
   <span class="badge ok">● ONLINE / AUTH</span>
   <span class="badge ok" id="dbBadge">● FIRESTORE</span>
-  <span class="badge ok" id="aiBadge">● GITHUB MODELS</span>
-  <span class="badge">v0.4</span>
+  <span class="badge ok" id="aiBadge">● GROQ</span>
+  <span class="badge">v0.6</span>
   <span class="spacer"></span>
   <span id="userEmail" class="userTag"></span>
   <button class="btn" onclick="runAutonomy()">Executar ciclo seguro</button>
@@ -44,7 +44,7 @@ aside{border-left:1px solid var(--line);background:var(--panel);overflow:auto;ma
   <button id="logoutBtn" class="btn">Sair</button>
 </header>
 <div id="feed"></div>
-<form id="composer" onsubmit="sendMsg(event)"><textarea id="input" placeholder="Pergunte ao Nexus..."></textarea><button id="sendBtn" class="btn primary" type="submit">Enviar</button></form>
+<form id="composer" onsubmit="sendMsg(event)"><div class="composerField"><textarea id="input" placeholder="Pergunte ao Nexus..."></textarea><div class="composerHint">Enter envia • Shift+Enter cria uma nova linha</div></div><button id="sendBtn" class="btn primary" type="submit">Enviar</button></form>
 </main>
 <aside>
 <div class="sec"><h2>Governança</h2><div class="card">
@@ -52,7 +52,7 @@ aside{border-left:1px solid var(--line);background:var(--panel);overflow:auto;ma
 </div></div>
 <div class="sec"><h2>Projetos</h2><div id="projects"></div></div>
 <div class="sec"><h2>Memória</h2><div class="card"><div class="t"><span id="memoryCount">0</span> itens aprendidos</div><div class="s" id="memoryStatus">Carregando memória do Firestore...</div><div class="row"><button class="btn" onclick="openMemory()">Adicionar conhecimento</button></div></div></div>
-<div class="sec"><h2>IA</h2><div class="card"><div class="t">GitHub Models</div><div class="s">A função askNexus usa memória persistente do Firestore e credencial protegida no Secret Manager.</div></div></div>
+<div class="sec"><h2>IA</h2><div class="card"><div class="t">Groq</div><div class="s">A função askNexus usa memória persistente do Firestore e credencial protegida no Secret Manager.</div></div></div>
 <div class="sec"><h2>Segurança</h2><div class="card"><div class="t">Firebase Authentication + Firestore Rules</div><div class="s">Acesso restrito à conta Google autorizada.</div></div></div>
 </aside>
 </div>
@@ -80,15 +80,16 @@ async function sendMsg(e){
   btn.textContent='Consultando...';
   try{
     const result=await window.nexusAsk(text);
-    const suffix=result?.model?`\n\n[${result.model} • ${result.memoryItemsUsed||0} memórias consultadas]`:'';
+    const provider=result?.provider?result.provider+' • ':'';
+    const suffix=result?.model?`\n\n[${provider}${result.model} • ${result.memoryItemsUsed||0} memórias consultadas]`:'';
     addMsg('assistant',(result?.answer||'O modelo não retornou resposta.')+suffix);
   }catch(err){
     console.error(err);
     const code=String(err?.code||'');
     let message=err?.message||'Falha ao consultar a IA.';
-    if(code.includes('resource-exhausted'))message='A cota disponível do GitHub Models foi atingida. Nenhuma alternativa paga foi acionada.';
+    if(code.includes('resource-exhausted'))message='A cota disponível do Groq foi atingida. Nenhuma alternativa paga foi acionada.';
     if(code.includes('permission-denied'))message='Acesso à função de IA negado para esta conta.';
-    if(code.includes('failed-precondition'))message='A credencial do GitHub Models foi recusada. Verifique o token configurado no Secret Manager.';
+    if(code.includes('failed-precondition'))message='A credencial do Groq foi recusada. Verifique a chave configurada no Secret Manager.';
     addMsg('assistant',message);
   }finally{
     btn.disabled=false;
@@ -101,6 +102,13 @@ function runAutonomy(){addMsg('assistant','Ciclo seguro simulado concluído. Nen
 function openMemory(){document.getElementById('memoryModal').style.display='grid'}function closeMemory(){document.getElementById('memoryModal').style.display='none'}
 async function saveMemory(){if(typeof window.nexusSaveMemory!=='function'){addMsg('assistant','Firestore ainda está inicializando. Tente novamente em alguns segundos.');return}await window.nexusSaveMemory()}
 window.runAutonomy=runAutonomy;window.openMemory=openMemory;window.closeMemory=closeMemory;window.saveMemory=saveMemory;window.sendMsg=sendMsg;window.nexusRender=render;window.nexusAddMsg=addMsg;
+const messageInput=document.getElementById('input');
+messageInput.addEventListener('keydown',event=>{
+  if(event.key==='Enter'&&!event.shiftKey&&!event.isComposing){
+    event.preventDefault();
+    document.getElementById('composer').requestSubmit();
+  }
+});
 render();
 </script>
 <script type="module">
@@ -132,7 +140,7 @@ window.nexusAsk=async(prompt)=>{
 };
 
 function showGate(message=''){app.classList.add('hidden');gate.classList.remove('hidden');status.textContent=message}
-async function showApp(user){gate.classList.add('hidden');app.classList.remove('hidden');userEmail.textContent=user.email||'';if(!document.getElementById('feed').children.length){window.nexusAddMsg('assistant','Acesso autenticado. Nexus online com Firebase, memória persistente e GitHub Models conectados.')}await loadMemory()}
+async function showApp(user){gate.classList.add('hidden');app.classList.remove('hidden');userEmail.textContent=user.email||'';if(!document.getElementById('feed').children.length){window.nexusAddMsg('assistant','Acesso autenticado. Nexus online com Firebase, memória persistente e Groq conectados.')}await loadMemory()}
 
 async function loadMemory(){
   memoryStatus.textContent='Carregando memória do Firestore...';
