@@ -1,0 +1,29 @@
+# Segredos e configuração local
+.env
+.env.*
+!.env.example
+secrets/
+*.pem
+*.key
+*service-account*.json
+
+# Dados locais / memória
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# Node / build futuro
+node_modules/
+dist/
+build/
+.firebase/
+
+# SO / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Logs
+*.log
