@@ -34,7 +34,8 @@ aside{border-left:1px solid var(--line);background:var(--panel);overflow:auto;ma
 <header>
   <span class="brand">NEXUS</span>
   <span class="badge ok">● ONLINE / AUTH</span>
-  <span class="badge">v0.2</span>
+  <span class="badge ok" id="dbBadge">● FIRESTORE</span>
+  <span class="badge">v0.3</span>
   <span class="spacer"></span>
   <span id="userEmail" class="userTag"></span>
   <button class="btn" onclick="runAutonomy()">Executar ciclo seguro</button>
@@ -49,33 +50,36 @@ aside{border-left:1px solid var(--line);background:var(--panel);overflow:auto;ma
 <div class="rule"><span>Observar</span><strong>AUTÔNOMO</strong></div><div class="rule"><span>Investigar</span><strong>AUTÔNOMO</strong></div><div class="rule"><span>Preparar código</span><strong>AUTÔNOMO</strong></div><div class="rule"><span>Testar / revisar</span><strong>AUTÔNOMO</strong></div><div class="rule"><span>Abrir PR</span><strong>AUTÔNOMO</strong></div><div class="rule"><span>Alterar produção</span><strong class="block">BLOQUEADO</strong></div><div class="rule"><span>Excluir dados</span><strong class="block">BLOQUEADO</strong></div><div class="rule"><span>Mudar regras/permissões</span><strong class="block">BLOQUEADO</strong></div><div class="rule"><span>Merge / deploy</span><strong class="block">SEU OK</strong></div><div class="rule"><span>Gerar custo</span><strong class="block">BLOQUEADO</strong></div>
 </div></div>
 <div class="sec"><h2>Projetos</h2><div id="projects"></div></div>
-<div class="sec"><h2>Memória</h2><div class="card"><div class="t"><span id="memoryCount">0</span> itens aprendidos</div><div class="s">Ainda salva localmente. Firestore será a próxima etapa.</div><div class="row"><button class="btn" onclick="openMemory()">Adicionar conhecimento</button></div></div></div>
-<div class="sec"><h2>Segurança</h2><div class="card"><div class="t">Firebase Authentication</div><div class="s">Google ativo. A interface só é liberada para o e-mail autorizado.</div></div></div>
+<div class="sec"><h2>Memória</h2><div class="card"><div class="t"><span id="memoryCount">0</span> itens aprendidos</div><div class="s" id="memoryStatus">Carregando memória do Firestore...</div><div class="row"><button class="btn" onclick="openMemory()">Adicionar conhecimento</button></div></div></div>
+<div class="sec"><h2>Segurança</h2><div class="card"><div class="t">Firebase Authentication + Firestore Rules</div><div class="s">Acesso restrito à conta Google autorizada.</div></div></div>
 </aside>
 </div>
 
-<div class="modal" id="memoryModal"><div class="box"><h3>Ensinar o Nexus</h3><div class="s">Registre regras de negócio, decisões, preferências técnicas ou fatos confirmados.</div><p><input id="memProject" placeholder="Projeto (ex.: Pronti Pet)"></p><p><select id="memType"><option>regra de negócio</option><option>decisão técnica</option><option>preferência</option><option>fato confirmado</option><option>observação</option></select></p><textarea id="memText" class="full" placeholder="Ex.: Status Finalizado nunca deve voltar para Em Atendimento."></textarea><div class="row"><button class="btn primary" onclick="saveMemory()">Salvar aprendizado</button><button class="btn" onclick="closeMemory()">Cancelar</button></div></div></div>
+<div class="modal" id="memoryModal"><div class="box"><h3>Ensinar o Nexus</h3><div class="s">Registre regras de negócio, decisões, preferências técnicas ou fatos confirmados.</div><p><input id="memProject" placeholder="Projeto (ex.: Pronti Pet)"></p><p><select id="memType"><option>regra de negócio</option><option>decisão técnica</option><option>preferência</option><option>fato confirmado</option><option>observação</option></select></p><textarea id="memText" class="full" placeholder="Ex.: Status Finalizado nunca deve voltar para Em Atendimento."></textarea><div class="row"><button id="saveMemoryBtn" class="btn primary" onclick="saveMemory()">Salvar aprendizado</button><button class="btn" onclick="closeMemory()">Cancelar</button></div></div></div>
 
 <script src="./firebase-config.js"></script>
 <script>
-const state={projects:[{name:'Pronti Pet',stack:'React / Firebase'},{name:'Pronti',stack:'Firebase / Web'},{name:'ListaLar',stack:'PWA / Firebase'}],memory:JSON.parse(localStorage.getItem('nexus_demo_memory')||'[]')};
+const state={projects:[{name:'Pronti Pet',stack:'React / Firebase'},{name:'Pronti',stack:'Firebase / Web'},{name:'ListaLar',stack:'PWA / Firebase'}],memory:[]};
+window.NEXUS_STATE=state;
 function esc(s){return String(s??'').replace(/[&<>\"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[c]||c))}
 function addMsg(role,text){const feed=document.getElementById('feed');const el=document.createElement('div');el.className='msg '+(role==='user'?'user':'assistant');el.innerHTML=`<div class="avatar">${role==='user'?'VC':'NX'}</div><div class="bubble">${esc(text)}</div>`;feed.appendChild(el);feed.scrollTop=feed.scrollHeight}
 function render(){document.getElementById('projects').innerHTML=state.projects.map(p=>`<div class="card"><div class="t">${esc(p.name)}</div><div class="s">${esc(p.stack)}</div><div class="row"><span class="pill ok">● online</span><span class="pill">conexão real: próxima etapa</span></div></div>`).join('');document.getElementById('memoryCount').textContent=state.memory.length}
-function sendMsg(e){e.preventDefault();const box=document.getElementById('input'),text=box.value.trim();if(!text)return;addMsg('user',text);box.value='';addMsg('assistant','Autenticação real está ativa. As integrações externas e a memória em Firestore entram nas próximas etapas, mantendo as travas de governança.')}
+function sendMsg(e){e.preventDefault();const box=document.getElementById('input'),text=box.value.trim();if(!text)return;addMsg('user',text);box.value='';addMsg('assistant','Autenticação e memória persistente estão conectadas ao Firebase. As integrações externas entram nas próximas etapas, mantendo as travas de governança.')}
 function runAutonomy(){addMsg('assistant','Ciclo seguro simulado concluído. Nenhuma alteração, exclusão, deploy, mudança de regra ou chamada paga foi executada.')}
 function openMemory(){document.getElementById('memoryModal').style.display='grid'}function closeMemory(){document.getElementById('memoryModal').style.display='none'}
-function saveMemory(){const project=document.getElementById('memProject').value.trim(),type=document.getElementById('memType').value,text=document.getElementById('memText').value.trim();if(!text)return;state.memory.push({project,type,text,ts:new Date().toISOString()});localStorage.setItem('nexus_demo_memory',JSON.stringify(state.memory));render();closeMemory();document.getElementById('memText').value='';addMsg('assistant',`Aprendizado salvo localmente: [${type}] ${project?project+' — ':''}${text}`)}
-window.runAutonomy=runAutonomy;window.openMemory=openMemory;window.closeMemory=closeMemory;window.saveMemory=saveMemory;window.sendMsg=sendMsg;
+async function saveMemory(){if(typeof window.nexusSaveMemory!=='function'){addMsg('assistant','Firestore ainda está inicializando. Tente novamente em alguns segundos.');return}await window.nexusSaveMemory()}
+window.runAutonomy=runAutonomy;window.openMemory=openMemory;window.closeMemory=closeMemory;window.saveMemory=saveMemory;window.sendMsg=sendMsg;window.nexusRender=render;window.nexusAddMsg=addMsg;
 render();
 </script>
 <script type="module">
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.2.1/firebase-app.js';
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/12.2.1/firebase-auth.js';
+import { getFirestore, collection, addDoc, getDocs, serverTimestamp } from 'https://www.gstatic.com/firebasejs/12.2.1/firebase-firestore.js';
 
 const AUTHORIZED_EMAIL='giva.norberto@gmail.com';
 const appFirebase=initializeApp(window.NEXUS_FIREBASE_CONFIG);
 const auth=getAuth(appFirebase);
+const db=getFirestore(appFirebase);
 const provider=new GoogleAuthProvider();
 const gate=document.getElementById('authGate');
 const app=document.getElementById('app');
@@ -83,18 +87,68 @@ const status=document.getElementById('authStatus');
 const loginBtn=document.getElementById('loginBtn');
 const logoutBtn=document.getElementById('logoutBtn');
 const userEmail=document.getElementById('userEmail');
+const memoryStatus=document.getElementById('memoryStatus');
+const saveMemoryBtn=document.getElementById('saveMemoryBtn');
+let currentUser=null;
 
 function showGate(message=''){app.classList.add('hidden');gate.classList.remove('hidden');status.textContent=message}
-function showApp(user){gate.classList.add('hidden');app.classList.remove('hidden');userEmail.textContent=user.email||'';if(!document.getElementById('feed').children.length){addMsg('assistant','Acesso autenticado. Nexus v0.2 online com Firebase Authentication ativo.') }}
+async function showApp(user){gate.classList.add('hidden');app.classList.remove('hidden');userEmail.textContent=user.email||'';if(!document.getElementById('feed').children.length){window.nexusAddMsg('assistant','Acesso autenticado. Nexus online com Firebase Authentication e Firestore ativos.')}await loadMemory()}
+
+async function loadMemory(){
+  memoryStatus.textContent='Carregando memória do Firestore...';
+  try{
+    const snap=await getDocs(collection(db,'memory'));
+    const items=snap.docs.map(d=>({id:d.id,...d.data()}));
+    items.sort((a,b)=>{
+      const ta=a.createdAt?.toMillis?.()||0;
+      const tb=b.createdAt?.toMillis?.()||0;
+      return tb-ta;
+    });
+    window.NEXUS_STATE.memory=items;
+    window.nexusRender();
+    memoryStatus.textContent='Memória persistente no Cloud Firestore.';
+  }catch(err){
+    console.error(err);
+    memoryStatus.textContent='Falha ao carregar o Firestore.';
+    window.nexusAddMsg('assistant','Não consegui carregar a memória do Firestore: '+(err?.message||'erro desconhecido'));
+  }
+}
+
+window.nexusSaveMemory=async()=>{
+  const project=document.getElementById('memProject').value.trim();
+  const type=document.getElementById('memType').value;
+  const text=document.getElementById('memText').value.trim();
+  if(!text)return;
+  saveMemoryBtn.disabled=true;
+  saveMemoryBtn.textContent='Salvando...';
+  try{
+    const payload={project,type,text,createdAt:serverTimestamp(),createdBy:currentUser?.email||''};
+    const ref=await addDoc(collection(db,'memory'),payload);
+    window.NEXUS_STATE.memory.unshift({id:ref.id,project,type,text,createdBy:currentUser?.email||'',createdAt:null});
+    window.nexusRender();
+    closeMemory();
+    document.getElementById('memText').value='';
+    document.getElementById('memProject').value='';
+    memoryStatus.textContent='Memória persistente no Cloud Firestore.';
+    window.nexusAddMsg('assistant',`Aprendizado salvo no Firestore: [${type}] ${project?project+' — ':''}${text}`);
+  }catch(err){
+    console.error(err);
+    window.nexusAddMsg('assistant','Falha ao salvar no Firestore: '+(err?.message||'erro desconhecido'));
+  }finally{
+    saveMemoryBtn.disabled=false;
+    saveMemoryBtn.textContent='Salvar aprendizado';
+  }
+};
 
 loginBtn.addEventListener('click',async()=>{status.textContent='Abrindo login Google...';try{await signInWithPopup(auth,provider)}catch(err){status.textContent='Falha no login: '+(err?.message||'erro desconhecido')}});
 logoutBtn.addEventListener('click',async()=>{await signOut(auth);showGate('Sessão encerrada.')});
 
 onAuthStateChanged(auth,async user=>{
-  if(!user){showGate();return}
+  if(!user){currentUser=null;showGate();return}
   const email=(user.email||'').toLowerCase();
   if(email!==AUTHORIZED_EMAIL){await signOut(auth);showGate('Acesso negado para '+email+'. Use a conta autorizada.');return}
-  showApp(user);
+  currentUser=user;
+  await showApp(user);
 });
 </script>
 </body>
