@@ -9,7 +9,7 @@
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}button,input,textarea,select{font:inherit}button{cursor:pointer}.hidden{display:none!important}
 #authGate{min-height:100vh;display:grid;place-items:center;padding:24px;background:radial-gradient(circle at top,#111a2c 0,#090b10 52%)}
 .loginBox{width:min(430px,94vw);background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:28px;box-shadow:0 20px 70px rgba(0,0,0,.35)}.brand{font-weight:800;letter-spacing:.22em;color:var(--accent)}.loginBox h1{margin:14px 0 8px;font-size:28px}.muted{color:var(--muted)}.authStatus{margin-top:14px;min-height:20px;color:var(--muted)}
-.btn{border:1px solid var(--line);background:var(--panel2);color:var(--text);border-radius:9px;padding:9px 12px}.btn:hover{border-color:var(--accent)}.btn.primary{background:var(--accent);color:#08101f;border-color:var(--accent);font-weight:700}.btn.danger{color:var(--err)}
+.btn{border:1px solid var(--line);background:var(--panel2);color:var(--text);border-radius:9px;padding:9px 12px}.btn:hover{border-color:var(--accent)}.btn.primary{background:var(--accent);color:#08101f;border-color:var(--accent);font-weight:700}.btn.danger{color:var(--err)}.btn:disabled{opacity:.55;cursor:not-allowed}
 #app{min-height:100vh;display:grid;grid-template-columns:1fr 360px}main{min-width:0;display:flex;flex-direction:column;min-height:100vh}header{display:flex;align-items:center;gap:10px;padding:12px 18px;border-bottom:1px solid var(--line);background:var(--panel);position:sticky;top:0;z-index:2}.badge,.pill{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:999px;padding:3px 8px;font-size:11px;color:var(--muted)}.badge.ok,.pill.ok{color:var(--ok);border-color:#225844}.spacer{flex:1}.userTag{font-size:12px;color:var(--muted)}
 #feed{flex:1;overflow:auto;padding:22px;display:flex;flex-direction:column;gap:14px}.msg{max-width:860px;display:flex;gap:10px}.msg.user{align-self:flex-end;flex-direction:row-reverse}.avatar{width:30px;height:30px;border-radius:8px;display:grid;place-items:center;font-size:10px;font-weight:800;flex:0 0 30px;background:linear-gradient(135deg,#4f46e5,#7da2ff)}.msg.user .avatar{background:var(--panel2);color:var(--muted)}.bubble{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:11px 14px;white-space:pre-wrap;overflow-wrap:anywhere}.msg.user .bubble{background:var(--panel2)}
 #composer{display:flex;gap:10px;padding:14px 18px;border-top:1px solid var(--line);background:var(--panel);position:sticky;bottom:0}#input{flex:1;resize:none;min-height:44px;max-height:150px;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:11px 13px;outline:none}
@@ -35,7 +35,8 @@ aside{border-left:1px solid var(--line);background:var(--panel);overflow:auto;ma
   <span class="brand">NEXUS</span>
   <span class="badge ok">● ONLINE / AUTH</span>
   <span class="badge ok" id="dbBadge">● FIRESTORE</span>
-  <span class="badge">v0.3</span>
+  <span class="badge ok" id="aiBadge">● GITHUB MODELS</span>
+  <span class="badge">v0.4</span>
   <span class="spacer"></span>
   <span id="userEmail" class="userTag"></span>
   <button class="btn" onclick="runAutonomy()">Executar ciclo seguro</button>
@@ -43,7 +44,7 @@ aside{border-left:1px solid var(--line);background:var(--panel);overflow:auto;ma
   <button id="logoutBtn" class="btn">Sair</button>
 </header>
 <div id="feed"></div>
-<form id="composer" onsubmit="sendMsg(event)"><textarea id="input" placeholder="Ex.: investigue o status do atendimento no Pronti Pet"></textarea><button class="btn primary" type="submit">Enviar</button></form>
+<form id="composer" onsubmit="sendMsg(event)"><textarea id="input" placeholder="Pergunte ao Nexus..."></textarea><button id="sendBtn" class="btn primary" type="submit">Enviar</button></form>
 </main>
 <aside>
 <div class="sec"><h2>Governança</h2><div class="card">
@@ -51,6 +52,7 @@ aside{border-left:1px solid var(--line);background:var(--panel);overflow:auto;ma
 </div></div>
 <div class="sec"><h2>Projetos</h2><div id="projects"></div></div>
 <div class="sec"><h2>Memória</h2><div class="card"><div class="t"><span id="memoryCount">0</span> itens aprendidos</div><div class="s" id="memoryStatus">Carregando memória do Firestore...</div><div class="row"><button class="btn" onclick="openMemory()">Adicionar conhecimento</button></div></div></div>
+<div class="sec"><h2>IA</h2><div class="card"><div class="t">GitHub Models</div><div class="s">A função askNexus usa memória persistente do Firestore e credencial protegida no Secret Manager.</div></div></div>
 <div class="sec"><h2>Segurança</h2><div class="card"><div class="t">Firebase Authentication + Firestore Rules</div><div class="s">Acesso restrito à conta Google autorizada.</div></div></div>
 </aside>
 </div>
@@ -63,8 +65,38 @@ const state={projects:[{name:'Pronti Pet',stack:'React / Firebase'},{name:'Pront
 window.NEXUS_STATE=state;
 function esc(s){return String(s??'').replace(/[&<>\"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[c]||c))}
 function addMsg(role,text){const feed=document.getElementById('feed');const el=document.createElement('div');el.className='msg '+(role==='user'?'user':'assistant');el.innerHTML=`<div class="avatar">${role==='user'?'VC':'NX'}</div><div class="bubble">${esc(text)}</div>`;feed.appendChild(el);feed.scrollTop=feed.scrollHeight}
-function render(){document.getElementById('projects').innerHTML=state.projects.map(p=>`<div class="card"><div class="t">${esc(p.name)}</div><div class="s">${esc(p.stack)}</div><div class="row"><span class="pill ok">● online</span><span class="pill">conexão real: próxima etapa</span></div></div>`).join('');document.getElementById('memoryCount').textContent=state.memory.length}
-function sendMsg(e){e.preventDefault();const box=document.getElementById('input'),text=box.value.trim();if(!text)return;addMsg('user',text);box.value='';addMsg('assistant','Autenticação e memória persistente estão conectadas ao Firebase. As integrações externas entram nas próximas etapas, mantendo as travas de governança.')}
+function render(){document.getElementById('projects').innerHTML=state.projects.map(p=>`<div class="card"><div class="t">${esc(p.name)}</div><div class="s">${esc(p.stack)}</div><div class="row"><span class="pill ok">● online</span><span class="pill">conexão do repositório: próxima etapa</span></div></div>`).join('');document.getElementById('memoryCount').textContent=state.memory.length}
+async function sendMsg(e){
+  e.preventDefault();
+  const box=document.getElementById('input');
+  const btn=document.getElementById('sendBtn');
+  const text=box.value.trim();
+  if(!text)return;
+  addMsg('user',text);
+  box.value='';
+  if(typeof window.nexusAsk!=='function'){addMsg('assistant','A função de IA ainda está inicializando. Tente novamente em alguns segundos.');return}
+  btn.disabled=true;
+  box.disabled=true;
+  btn.textContent='Consultando...';
+  try{
+    const result=await window.nexusAsk(text);
+    const suffix=result?.model?`\n\n[${result.model} • ${result.memoryItemsUsed||0} memórias consultadas]`:'';
+    addMsg('assistant',(result?.answer||'O modelo não retornou resposta.')+suffix);
+  }catch(err){
+    console.error(err);
+    const code=String(err?.code||'');
+    let message=err?.message||'Falha ao consultar a IA.';
+    if(code.includes('resource-exhausted'))message='A cota disponível do GitHub Models foi atingida. Nenhuma alternativa paga foi acionada.';
+    if(code.includes('permission-denied'))message='Acesso à função de IA negado para esta conta.';
+    if(code.includes('failed-precondition'))message='A credencial do GitHub Models foi recusada. Verifique o token configurado no Secret Manager.';
+    addMsg('assistant',message);
+  }finally{
+    btn.disabled=false;
+    box.disabled=false;
+    btn.textContent='Enviar';
+    box.focus();
+  }
+}
 function runAutonomy(){addMsg('assistant','Ciclo seguro simulado concluído. Nenhuma alteração, exclusão, deploy, mudança de regra ou chamada paga foi executada.')}
 function openMemory(){document.getElementById('memoryModal').style.display='grid'}function closeMemory(){document.getElementById('memoryModal').style.display='none'}
 async function saveMemory(){if(typeof window.nexusSaveMemory!=='function'){addMsg('assistant','Firestore ainda está inicializando. Tente novamente em alguns segundos.');return}await window.nexusSaveMemory()}
@@ -75,11 +107,14 @@ render();
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.2.1/firebase-app.js';
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/12.2.1/firebase-auth.js';
 import { getFirestore, collection, addDoc, getDocs, serverTimestamp } from 'https://www.gstatic.com/firebasejs/12.2.1/firebase-firestore.js';
+import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/12.2.1/firebase-functions.js';
 
 const AUTHORIZED_EMAIL='giva.norberto@gmail.com';
 const appFirebase=initializeApp(window.NEXUS_FIREBASE_CONFIG);
 const auth=getAuth(appFirebase);
 const db=getFirestore(appFirebase);
+const functions=getFunctions(appFirebase,'southamerica-east1');
+const askNexus=httpsCallable(functions,'askNexus');
 const provider=new GoogleAuthProvider();
 const gate=document.getElementById('authGate');
 const app=document.getElementById('app');
@@ -91,8 +126,13 @@ const memoryStatus=document.getElementById('memoryStatus');
 const saveMemoryBtn=document.getElementById('saveMemoryBtn');
 let currentUser=null;
 
+window.nexusAsk=async(prompt)=>{
+  const result=await askNexus({prompt});
+  return result.data||{};
+};
+
 function showGate(message=''){app.classList.add('hidden');gate.classList.remove('hidden');status.textContent=message}
-async function showApp(user){gate.classList.add('hidden');app.classList.remove('hidden');userEmail.textContent=user.email||'';if(!document.getElementById('feed').children.length){window.nexusAddMsg('assistant','Acesso autenticado. Nexus online com Firebase Authentication e Firestore ativos.')}await loadMemory()}
+async function showApp(user){gate.classList.add('hidden');app.classList.remove('hidden');userEmail.textContent=user.email||'';if(!document.getElementById('feed').children.length){window.nexusAddMsg('assistant','Acesso autenticado. Nexus online com Firebase, memória persistente e GitHub Models conectados.')}await loadMemory()}
 
 async function loadMemory(){
   memoryStatus.textContent='Carregando memória do Firestore...';
