@@ -7,3 +7,19 @@ window.NEXUS_FIREBASE_CONFIG = {
   appId: "1:288616302811:web:6febc7951de9fb00eae4fe",
   measurementId: "G-G70PRJCF6W"
 };
+
+// Mantém a conversa acompanhando automaticamente a mensagem mais recente.
+window.addEventListener('DOMContentLoaded', () => {
+  const feed = document.getElementById('feed');
+  if (!feed) return;
+
+  const scrollToLatest = () => {
+    requestAnimationFrame(() => {
+      feed.scrollTo({ top: feed.scrollHeight, behavior: 'smooth' });
+    });
+  };
+
+  const observer = new MutationObserver(scrollToLatest);
+  observer.observe(feed, { childList: true, subtree: true, characterData: true });
+  scrollToLatest();
+});
