@@ -14,36 +14,28 @@ window.addEventListener('DOMContentLoaded', () => {
   const header = document.querySelector('header');
   const app = document.getElementById('app');
 
-  // Interface mais limpa: não exibe detalhes técnicos de autenticação ao usuário.
   if (header) {
     const authBadge = [...header.querySelectorAll('.badge')]
       .find((badge) => badge.textContent.includes('ONLINE / AUTH'));
     if (authBadge) authBadge.textContent = '● ONLINE';
   }
 
-  // Rolagem automática do chat e remoção da mensagem técnica de autenticação.
   if (feed) {
     const cleanupTechnicalGreeting = () => {
       for (const message of feed.querySelectorAll('.msg.assistant')) {
         const bubble = message.querySelector('.bubble');
-        if (bubble && bubble.textContent.trim().startsWith('Acesso autenticado.')) {
-          message.remove();
-        }
+        if (bubble && bubble.textContent.trim().startsWith('Acesso autenticado.')) message.remove();
       }
     };
-
     const scrollToLatest = () => {
       cleanupTechnicalGreeting();
-      requestAnimationFrame(() => {
-        feed.scrollTo({ top: feed.scrollHeight, behavior: 'smooth' });
-      });
+      requestAnimationFrame(() => feed.scrollTo({ top: feed.scrollHeight, behavior: 'smooth' }));
     };
     const observer = new MutationObserver(scrollToLatest);
     observer.observe(feed, { childList: true, subtree: true, characterData: true });
     scrollToLatest();
   }
 
-  // PWA: metadados e manifest sem exigir alteração estrutural no HTML principal.
   if (!document.querySelector('link[rel="manifest"]')) {
     const manifest = document.createElement('link');
     manifest.rel = 'manifest';
@@ -73,51 +65,21 @@ window.addEventListener('DOMContentLoaded', () => {
   appleTitle.content = 'Nexus';
   document.head.appendChild(appleTitle);
 
-  // Layout limpo: painel lateral vira gaveta recolhível.
   if (aside && header && app) {
     const style = document.createElement('style');
     style.textContent = `
       :root{--nexus-aside-width:360px}
       #app{grid-template-columns:1fr!important}
-      aside{
-        position:fixed!important;
-        top:0!important;
-        right:0!important;
-        width:min(var(--nexus-aside-width),92vw)!important;
-        height:100dvh!important;
-        max-height:100dvh!important;
-        z-index:40!important;
-        transform:translateX(102%);
-        transition:transform .22s ease;
-        box-shadow:-18px 0 55px rgba(0,0,0,.38);
-        border-left:1px solid var(--line)!important;
-        border-top:0!important;
-      }
+      aside{position:fixed!important;top:0!important;right:0!important;width:min(var(--nexus-aside-width),92vw)!important;height:100dvh!important;max-height:100dvh!important;z-index:40!important;transform:translateX(102%);transition:transform .22s ease;box-shadow:-18px 0 55px rgba(0,0,0,.38);border-left:1px solid var(--line)!important;border-top:0!important}
       body.nexus-panel-open aside{transform:translateX(0)}
-      .nexus-panel-backdrop{
-        position:fixed;inset:0;background:rgba(0,0,0,.52);z-index:35;
-        opacity:0;pointer-events:none;transition:opacity .2s ease;
-      }
+      .nexus-panel-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.52);z-index:35;opacity:0;pointer-events:none;transition:opacity .2s ease}
       body.nexus-panel-open .nexus-panel-backdrop{opacity:1;pointer-events:auto}
       .nexus-menu-btn{display:inline-grid;place-items:center;min-width:42px;font-size:18px;padding:7px 10px}
       .nexus-install-btn{display:none}
       header{padding-right:12px!important}
       #feed{max-width:1100px;width:100%;margin:0 auto}
       #composer{padding-left:max(18px,calc((100vw - 1100px)/2));padding-right:max(18px,calc((100vw - 1100px)/2))}
-      @media(max-width:760px){
-        header{gap:7px!important;padding:9px 10px!important;flex-wrap:nowrap!important}
-        header .badge{display:none!important}
-        header .userTag{display:none!important}
-        header .brand{font-size:12px}
-        header .btn:not(.nexus-menu-btn):not(.nexus-install-btn){padding:8px 9px;font-size:12px}
-        #feed{padding:14px 10px 104px!important}
-        .msg{max-width:96%!important}
-        #composer{padding:10px!important;gap:7px!important}
-        .composerHint{display:none!important}
-        #input{min-height:48px!important}
-        #sendBtn{padding:10px 12px!important}
-        .nexus-install-btn{font-size:12px}
-      }
+      @media(max-width:760px){header{gap:7px!important;padding:9px 10px!important;flex-wrap:nowrap!important}header .badge{display:none!important}header .userTag{display:none!important}header .brand{font-size:12px}header .btn:not(.nexus-menu-btn):not(.nexus-install-btn){padding:8px 9px;font-size:12px}#feed{padding:14px 10px 104px!important}.msg{max-width:96%!important}#composer{padding:10px!important;gap:7px!important}.composerHint{display:none!important}#input{min-height:48px!important}#sendBtn{padding:10px 12px!important}.nexus-install-btn{font-size:12px}}
     `;
     document.head.appendChild(style);
 
@@ -142,12 +104,9 @@ window.addEventListener('DOMContentLoaded', () => {
     };
     menuBtn.addEventListener('click', () => setPanel(!document.body.classList.contains('nexus-panel-open')));
     backdrop.addEventListener('click', () => setPanel(false));
-    document.addEventListener('keydown', (event) => {
-      if (event.key === 'Escape') setPanel(false);
-    });
+    document.addEventListener('keydown', (event) => { if (event.key === 'Escape') setPanel(false); });
   }
 
-  // Instalação como aplicativo no celular/desktop (PWA).
   let deferredInstallPrompt = null;
   if (header) {
     const installBtn = document.createElement('button');
@@ -156,13 +115,11 @@ window.addEventListener('DOMContentLoaded', () => {
     installBtn.textContent = 'Instalar';
     installBtn.title = 'Instalar Nexus neste dispositivo';
     header.appendChild(installBtn);
-
     window.addEventListener('beforeinstallprompt', (event) => {
       event.preventDefault();
       deferredInstallPrompt = event;
       installBtn.style.display = 'inline-flex';
     });
-
     installBtn.addEventListener('click', async () => {
       if (!deferredInstallPrompt) return;
       deferredInstallPrompt.prompt();
@@ -170,19 +127,14 @@ window.addEventListener('DOMContentLoaded', () => {
       deferredInstallPrompt = null;
       installBtn.style.display = 'none';
     });
-
     window.addEventListener('appinstalled', () => {
       deferredInstallPrompt = null;
       installBtn.style.display = 'none';
     });
   }
 
-  // Comandos explícitos de memória e arquivamento de conversa.
   const normalizeCommand = (value) => String(value || '')
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .trim();
+    .toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
 
   const collectConversation = () => {
     if (!feed) return [];
@@ -192,6 +144,19 @@ window.addEventListener('DOMContentLoaded', () => {
       const role = message.classList.contains('user') ? 'user' : 'assistant';
       return { role, text };
     }).filter((item) => item.text && !item.text.startsWith('Acesso autenticado.'));
+  };
+
+  const getPreviousUserMessage = (currentNormalized = '') => {
+    const messages = collectConversation();
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const item = messages[i];
+      if (item.role !== 'user') continue;
+      const normalizedItem = normalizeCommand(item.text);
+      if (!normalizedItem || normalizedItem === currentNormalized) continue;
+      if (/^(salve|salvar|guarde|guardar|lembre)/.test(normalizedItem)) continue;
+      return item.text;
+    }
+    return '';
   };
 
   let callablesPromise = null;
@@ -226,7 +191,8 @@ window.addEventListener('DOMContentLoaded', () => {
     const callables = await getMemoryCallables();
     const result = await callables.saveMemoryCommand({ text });
     const item = result?.data || {};
-    if (item.saved && window.NEXUS_STATE?.memory) {
+    if (!item.saved) throw new Error('A função não confirmou o salvamento.');
+    if (window.NEXUS_STATE?.memory) {
       window.NEXUS_STATE.memory.unshift({ id: item.id, project: item.project, type: item.type, text: item.text, createdAt: null });
       if (typeof window.nexusRender === 'function') window.nexusRender();
     }
@@ -243,6 +209,8 @@ window.addEventListener('DOMContentLoaded', () => {
 
       const isSaveConversation = /\b(salve|salvar|guarde|guardar)\b.*\b(conversa|chat)\b/.test(normalized);
       const isMemoryStart = /^(nexus[, ]*)?(guardar|guarde|salvar|salve)\s+(uma\s+)?(informacao|memoria)\s*[:.!]?\s*$/.test(normalized);
+      const isPreviousMemoryReference = /^(nexus[, ]*)?(salve|salvar|guarde|guardar|lembre)\s+(esta|essa|isso|disto|disso)?\s*(informacao|memoria|mensagem)?\s*(anterior)?\s*[.!]?\s*$/.test(normalized)
+        || /^(nexus[, ]*)?(salve|salvar|guarde|guardar|lembre)\s+(isso|disso|disto)\s*[.!]?\s*$/.test(normalized);
       const directMemoryMatch = normalized.match(/^(?:nexus[, ]*)?(?:guarde|guardar|lembre|salve na memoria|salvar na memoria)(?:\s+(?:que|informacao|isso))?\s*[:,-]?\s+(.+)$/);
 
       if (isSaveConversation) {
@@ -259,10 +227,11 @@ window.addEventListener('DOMContentLoaded', () => {
           const callables = await getMemoryCallables();
           const result = await callables.saveConversation({ messages });
           const saved = result?.data || {};
+          if (!saved.saved) throw new Error('A função não confirmou o salvamento.');
           addLocalMessage('assistant', `Conversa salva no Storage: ${saved.title || 'Conversa Nexus'}${saved.project ? ` • ${saved.project}` : ''}.`);
         } catch (error) {
           console.error(error);
-          addLocalMessage('assistant', 'Não consegui salvar a conversa. Verifique se as novas Functions já foram publicadas.');
+          addLocalMessage('assistant', 'Não consegui salvar a conversa. Nada foi confirmado como armazenado.');
         }
         return;
       }
@@ -276,6 +245,25 @@ window.addEventListener('DOMContentLoaded', () => {
         return;
       }
 
+      if (isPreviousMemoryReference) {
+        event?.preventDefault?.();
+        const previousText = getPreviousUserMessage(normalized);
+        addLocalMessage('user', rawText);
+        if (input) input.value = '';
+        if (!previousText) {
+          addLocalMessage('assistant', 'Não encontrei uma mensagem anterior sua para guardar. Diga a informação novamente ou use “guarde que ...”.');
+          return;
+        }
+        try {
+          const saved = await saveExplicitMemory(previousText);
+          addLocalMessage('assistant', `Informação guardada com confirmação do Firestore: [${saved.type}] ${saved.project ? `${saved.project} — ` : ''}${saved.text}`);
+        } catch (error) {
+          console.error(error);
+          addLocalMessage('assistant', 'Não consegui confirmar o salvamento dessa informação. Ela não será tratada como memória persistente.');
+        }
+        return;
+      }
+
       const memoryText = pendingMemory ? rawText : directMemoryMatch?.[1];
       if (memoryText) {
         event?.preventDefault?.();
@@ -284,10 +272,10 @@ window.addEventListener('DOMContentLoaded', () => {
         sessionStorage.removeItem('nexusPendingMemory');
         try {
           const saved = await saveExplicitMemory(memoryText);
-          addLocalMessage('assistant', `Informação guardada: [${saved.type || 'memória'}] ${saved.project ? `${saved.project} — ` : ''}${saved.text || memoryText}`);
+          addLocalMessage('assistant', `Informação guardada com confirmação do Firestore: [${saved.type}] ${saved.project ? `${saved.project} — ` : ''}${saved.text}`);
         } catch (error) {
           console.error(error);
-          addLocalMessage('assistant', 'Não consegui guardar a informação. Verifique se as novas Functions já foram publicadas.');
+          addLocalMessage('assistant', 'Não consegui confirmar o salvamento da informação. Ela não será tratada como memória persistente.');
         }
         return;
       }
