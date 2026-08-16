@@ -54,6 +54,12 @@ window.addEventListener('DOMContentLoaded', () => {
     capable.content = 'yes';
     document.head.appendChild(capable);
   }
+  if (!document.querySelector('meta[name="mobile-web-app-capable"]')) {
+    const capable = document.createElement('meta');
+    capable.name = 'mobile-web-app-capable';
+    capable.content = 'yes';
+    document.head.appendChild(capable);
+  }
   if (!document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]')) {
     const statusBar = document.createElement('meta');
     statusBar.name = 'apple-mobile-web-app-status-bar-style';
@@ -64,6 +70,14 @@ window.addEventListener('DOMContentLoaded', () => {
   appleTitle.name = 'apple-mobile-web-app-title';
   appleTitle.content = 'Nexus';
   document.head.appendChild(appleTitle);
+
+  if (!document.querySelector('link[rel="icon"]')) {
+    const favicon = document.createElement('link');
+    favicon.rel = 'icon';
+    favicon.href = './nexus-icon.svg';
+    favicon.type = 'image/svg+xml';
+    document.head.appendChild(favicon);
+  }
 
   if (aside && header && app) {
     const style = document.createElement('style');
@@ -232,6 +246,7 @@ window.addEventListener('DOMContentLoaded', () => {
       const pendingMemory = sessionStorage.getItem('nexusPendingMemory') === '1';
       const pendingSubject = sessionStorage.getItem('nexusPendingMemorySubject') || '';
 
+      const inlineMemoryMatch = rawText.match(/^([\s\S]+?)\s*(?:\n+|[.!?]\s+)(?:nexus[, ]*)?(?:salve|salvar|save|guarde|guardar|lembre)\s+(?:esta|essa|isso|disto|disso)?\s*(?:informação|informacao|memória|memoria|mensagem)?\s*[.!]?\s*$/i);
       const isSaveConversation = /\b(salve|salvar|save|guarde|guardar)\b.*\b(conversa|chat)\b/.test(normalized);
       const isMemoryStart = /^(nexus[, ]*)?(guardar|guarde|salvar|salve|save)\s+(uma\s+)?(informacao|memoria)\s*[:.!]?\s*$/.test(normalized);
       const isPreviousMemoryReference = /^(nexus[, ]*)?(salve|salvar|save|guarde|guardar|lembre)\s+(esta|essa|isso|disto|disso)?\s*(informacao|memoria|mensagem)?\s*(anterior)?\s*[.!]?\s*$/.test(normalized)
@@ -258,6 +273,21 @@ window.addEventListener('DOMContentLoaded', () => {
         } catch (error) {
           console.error(error);
           addLocalMessage('assistant', 'Não consegui salvar a conversa. Nada foi confirmado como armazenado.');
+        }
+        return;
+      }
+
+      if (inlineMemoryMatch) {
+        event?.preventDefault?.();
+        const memoryValue = inlineMemoryMatch[1].trim();
+        addLocalMessage('user', rawText);
+        if (input) input.value = '';
+        try {
+          const saved = await saveExplicitMemory(memoryValue);
+          addLocalMessage('assistant', `Informação guardada com confirmação do Firestore: [${saved.type}] ${saved.project ? `${saved.project} — ` : ''}${saved.text}`);
+        } catch (error) {
+          console.error(error);
+          addLocalMessage('assistant', 'Não consegui confirmar o salvamento da informação. Ela não será tratada como memória persistente.');
         }
         return;
       }
