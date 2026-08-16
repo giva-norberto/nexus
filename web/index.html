@@ -35,8 +35,8 @@ aside{border-left:1px solid var(--line);background:var(--panel);overflow:auto;ma
   <span class="brand">NEXUS</span>
   <span class="badge ok">● ONLINE / AUTH</span>
   <span class="badge ok" id="dbBadge">● FIRESTORE</span>
-  <span class="badge ok" id="aiBadge">● GROQ</span>
-  <span class="badge">v0.6</span>
+  <span class="badge ok" id="aiBadge">● IA ONLINE</span>
+  <span class="badge">v0.7</span>
   <span class="spacer"></span>
   <span id="userEmail" class="userTag"></span>
   <button class="btn" onclick="runAutonomy()">Executar ciclo seguro</button>
@@ -52,7 +52,7 @@ aside{border-left:1px solid var(--line);background:var(--panel);overflow:auto;ma
 </div></div>
 <div class="sec"><h2>Projetos</h2><div id="projects"></div></div>
 <div class="sec"><h2>Memória</h2><div class="card"><div class="t"><span id="memoryCount">0</span> itens aprendidos</div><div class="s" id="memoryStatus">Carregando memória do Firestore...</div><div class="row"><button class="btn" onclick="openMemory()">Adicionar conhecimento</button></div></div></div>
-<div class="sec"><h2>IA</h2><div class="card"><div class="t">Groq</div><div class="s">A função askNexus usa memória persistente do Firestore e credencial protegida no Secret Manager.</div></div></div>
+<div class="sec"><h2>IA</h2><div class="card"><div class="t">IA online</div><div class="s">O Nexus usa memória persistente do Firestore e credencial protegida no Secret Manager.</div></div></div>
 <div class="sec"><h2>Segurança</h2><div class="card"><div class="t">Firebase Authentication + Firestore Rules</div><div class="s">Acesso restrito à conta Google autorizada.</div></div></div>
 </aside>
 </div>
@@ -80,16 +80,14 @@ async function sendMsg(e){
   btn.textContent='Consultando...';
   try{
     const result=await window.nexusAsk(text);
-    const provider=result?.provider?result.provider+' • ':'';
-    const suffix=result?.model?`\n\n[${provider}${result.model} • ${result.memoryItemsUsed||0} memórias consultadas]`:'';
-    addMsg('assistant',(result?.answer||'O modelo não retornou resposta.')+suffix);
+    addMsg('assistant',result?.answer||'O modelo não retornou resposta.');
   }catch(err){
     console.error(err);
     const code=String(err?.code||'');
     let message=err?.message||'Falha ao consultar a IA.';
-    if(code.includes('resource-exhausted'))message='A cota disponível do Groq foi atingida. Nenhuma alternativa paga foi acionada.';
+    if(code.includes('resource-exhausted'))message='A cota disponível da IA foi atingida. Nenhuma alternativa paga foi acionada.';
     if(code.includes('permission-denied'))message='Acesso à função de IA negado para esta conta.';
-    if(code.includes('failed-precondition'))message='A credencial do Groq foi recusada. Verifique a chave configurada no Secret Manager.';
+    if(code.includes('failed-precondition'))message='A credencial da IA foi recusada. Verifique a chave configurada no Secret Manager.';
     addMsg('assistant',message);
   }finally{
     btn.disabled=false;
@@ -140,7 +138,7 @@ window.nexusAsk=async(prompt)=>{
 };
 
 function showGate(message=''){app.classList.add('hidden');gate.classList.remove('hidden');status.textContent=message}
-async function showApp(user){gate.classList.add('hidden');app.classList.remove('hidden');userEmail.textContent=user.email||'';if(!document.getElementById('feed').children.length){window.nexusAddMsg('assistant','Acesso autenticado. Nexus online com Firebase, memória persistente e Groq conectados.')}await loadMemory()}
+async function showApp(user){gate.classList.add('hidden');app.classList.remove('hidden');userEmail.textContent=user.email||'';if(!document.getElementById('feed').children.length){window.nexusAddMsg('assistant','Acesso autenticado. Nexus online com Firebase, memória persistente e IA conectados.')}await loadMemory()}
 
 async function loadMemory(){
   memoryStatus.textContent='Carregando memória do Firestore...';
