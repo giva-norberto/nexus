@@ -8,7 +8,7 @@ secrets/
 *service-account*.json
 
 # Dados locais / memória
- data/
+data/
 *.db
 *.sqlite
 *.sqlite3
