@@ -7,6 +7,7 @@ const MAX_COLLECTION_DOCS = 100;
 const MAX_FAMILIES = 100;
 const MAX_PURCHASES = 1000;
 const MAX_ITEMS = 10000;
+const MAX_HISTORY_PER_ITEM = 50;
 
 const PROJECTS = {
   listalar: { key: 'listalar', name: 'ListaLar', projectId: 'compras-da-casa' }
@@ -72,6 +73,10 @@ function toNumber(value, fallback = 0) {
 }
 
 function roundMoney(value) {
+  return Math.round((toNumber(value, 0) + Number.EPSILON) * 100) / 100;
+}
+
+function roundPct(value) {
   return Math.round((toNumber(value, 0) + Number.EPSILON) * 100) / 100;
 }
 
@@ -178,15 +183,30 @@ exports.firebaseSpendingAnalytics = onCall(
           const quantity = Math.max(0, toNumber(item.quantidade, 0));
           const unitPrice = Math.max(0, toNumber(item.precoUnitario, 0));
           const lineTotal = Math.max(0, toNumber(item.valorTotal, quantity * unitPrice));
+          const establishment = String(gasto.estabelecimentoNome || '');
+          const purchaseIso = Number.isFinite(purchaseDate) ? new Date(purchaseDate).toISOString() : null;
 
           const current = items.get(key) || {
-            key, name, productId, gtin, totalSpent: 0, quantity: 0, occurrences: 0, maxUnitPrice: 0, minUnitPrice: null
+            key, name, productId, gtin, totalSpent: 0, quantity: 0, occurrences: 0,
+            maxUnitPrice: 0, minUnitPrice: null, history: []
           };
           current.totalSpent += lineTotal;
           current.quantity += quantity;
           current.occurrences += 1;
-          current.maxUnitPrice = Math.max(current.maxUnitPrice, unitPrice);
-          current.minUnitPrice = current.minUnitPrice === null ? unitPrice : Math.min(current.minUnitPrice, unitPrice);
+          if (unitPrice > 0) {
+            current.maxUnitPrice = Math.max(current.maxUnitPrice, unitPrice);
+            current.minUnitPrice = current.minUnitPrice === null ? unitPrice : Math.min(current.minUnitPrice, unitPrice);
+          }
+          if (current.history.length < MAX_HISTORY_PER_ITEM) {
+            current.history.push({
+              date: purchaseIso,
+              dateMs: Number.isFinite(purchaseDate) ? purchaseDate : null,
+              unitPrice: roundMoney(unitPrice),
+              quantity: Math.round(quantity * 1000) / 1000,
+              lineTotal: roundMoney(lineTotal),
+              establishment
+            });
+          }
           if (name.length > current.name.length) current.name = name;
           items.set(key, current);
 
@@ -195,8 +215,8 @@ exports.firebaseSpendingAnalytics = onCall(
             unitPrice: roundMoney(unitPrice),
             lineTotal: roundMoney(lineTotal),
             quantity,
-            establishment: String(gasto.estabelecimentoNome || ''),
-            date: Number.isFinite(purchaseDate) ? new Date(purchaseDate).toISOString() : null,
+            establishment,
+            date: purchaseIso,
             familyId: familyDoc.id,
             gastoId: gastoDoc.id,
             itemId: itemDoc.id
@@ -207,18 +227,52 @@ exports.firebaseSpendingAnalytics = onCall(
       }
     }
 
-    const aggregates = [...items.values()].map((item) => ({
-      ...item,
-      totalSpent: roundMoney(item.totalSpent),
-      quantity: Math.round(item.quantity * 1000) / 1000,
-      avgUnitPrice: item.quantity > 0 ? roundMoney(item.totalSpent / item.quantity) : 0,
-      maxUnitPrice: roundMoney(item.maxUnitPrice),
-      minUnitPrice: roundMoney(item.minUnitPrice || 0)
-    }));
+    const aggregates = [...items.values()].map((item) => {
+      const history = [...item.history].sort((a, b) => {
+        if (a.dateMs === null && b.dateMs === null) return 0;
+        if (a.dateMs === null) return 1;
+        if (b.dateMs === null) return -1;
+        return a.dateMs - b.dateMs;
+      });
+      const datedPositive = history.filter((entry) => entry.dateMs !== null && entry.unitPrice > 0);
+      const first = datedPositive[0] || null;
+      const last = datedPositive[datedPositive.length - 1] || null;
+      const firstUnitPrice = first?.unitPrice || 0;
+      const lastUnitPrice = last?.unitPrice || 0;
+      const priceChange = first && last ? roundMoney(lastUnitPrice - firstUnitPrice) : 0;
+      const priceChangePct = first && last && firstUnitPrice > 0 ? roundPct((priceChange / firstUnitPrice) * 100) : 0;
+      const distinctPrices = new Set(datedPositive.map((entry) => entry.unitPrice.toFixed(2))).size;
+      const comparable = datedPositive.length >= 2;
+      let trend = 'insufficient-data';
+      if (comparable) trend = priceChange > 0 ? 'up' : priceChange < 0 ? 'down' : 'stable';
 
+      return {
+        ...item,
+        totalSpent: roundMoney(item.totalSpent),
+        quantity: Math.round(item.quantity * 1000) / 1000,
+        avgUnitPrice: item.quantity > 0 ? roundMoney(item.totalSpent / item.quantity) : 0,
+        maxUnitPrice: roundMoney(item.maxUnitPrice),
+        minUnitPrice: roundMoney(item.minUnitPrice || 0),
+        firstUnitPrice,
+        lastUnitPrice,
+        firstPriceDate: first?.date || null,
+        lastPriceDate: last?.date || null,
+        priceChange,
+        priceChangePct,
+        distinctPrices,
+        priceChanged: comparable && distinctPrices > 1,
+        trend,
+        history: history.map(({ dateMs: _dateMs, ...entry }) => entry)
+      };
+    });
+
+    const comparable = aggregates.filter((item) => item.trend !== 'insufficient-data');
     const topBySpend = [...aggregates].sort((a, b) => b.totalSpent - a.totalSpent).slice(0, 15);
     const topByUnitPrice = [...aggregates].sort((a, b) => b.maxUnitPrice - a.maxUnitPrice).slice(0, 15);
     const topByOccurrences = [...aggregates].sort((a, b) => b.occurrences - a.occurrences).slice(0, 15);
+    const topPriceIncreases = comparable.filter((item) => item.priceChange > 0).sort((a, b) => b.priceChangePct - a.priceChangePct).slice(0, 15);
+    const topPriceDecreases = comparable.filter((item) => item.priceChange < 0).sort((a, b) => a.priceChangePct - b.priceChangePct).slice(0, 15);
+    const changedPriceItems = comparable.filter((item) => item.priceChanged).sort((a, b) => Math.abs(b.priceChangePct) - Math.abs(a.priceChangePct)).slice(0, 30);
 
     return {
       project: project.name,
@@ -233,10 +287,14 @@ exports.firebaseSpendingAnalytics = onCall(
       topBySpend,
       topByUnitPrice,
       topByOccurrences,
+      topPriceIncreases,
+      topPriceDecreases,
+      changedPriceItems,
+      priceComparableItems: comparable.length,
       highestUnit,
       highestLine,
       truncated: truncatedPurchases || truncatedItems || familiesSnap.size >= MAX_FAMILIES,
-      limits: { families: MAX_FAMILIES, purchases: MAX_PURCHASES, items: MAX_ITEMS }
+      limits: { families: MAX_FAMILIES, purchases: MAX_PURCHASES, items: MAX_ITEMS, historyPerItem: MAX_HISTORY_PER_ITEM }
     };
   }
 );
