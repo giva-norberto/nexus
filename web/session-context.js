@@ -95,31 +95,65 @@
     return null;
   };
 
+  const requestedTopN = (prompt, fallback = 5) => {
+    const text = normalize(prompt);
+    const explicit = text.match(/(?:top\s*|os\s+|as\s+)?(\d{1,2})\s+(?:itens|produtos|mais|maiores|caros|caras)/);
+    if (!explicit) return fallback;
+    return Math.min(15, Math.max(1, Number(explicit[1])));
+  };
+
   const brl = (value) => Number(value || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  const vezes = (value) => `${Number(value || 0)} ${Number(value || 0) === 1 ? 'vez' : 'vezes'}`;
 
   const formatSpendingAnalytics = (data, prompt) => {
     const text = normalize(prompt);
-    const period = data?.periodDays ? `nos últimos ${data.periodDays} dias` : 'em todo o histórico disponível';
+    const period = data?.periodDays ? `Últimos ${data.periodDays} dias` : 'Todo o histórico disponível';
     const topSpend = Array.isArray(data?.topBySpend) ? data.topBySpend : [];
     const topPrice = Array.isArray(data?.topByUnitPrice) ? data.topByUnitPrice : [];
+    const topN = requestedTopN(prompt, 5);
+    const wantsPrice = /mais caro|mais cara|preco|precos/.test(text);
+    const wantsSpend = /gasto|gastei|mais|ranking|item|produto|compras/.test(text);
     const lines = [
-      `Análise confirmada do Firestore do ListaLar ${period}:`,
-      `• ${data?.purchaseCount || 0} compra(s), ${data?.itemCount || 0} linha(s) de itens e ${data?.uniqueItems || 0} item(ns) consolidados.`,
-      `• Total das compras analisadas: ${brl(data?.totalSpent)}.`
+      'LISTALAR — ANÁLISE DE COMPRAS',
+      '',
+      `Período: ${period}`,
+      `Compras analisadas: ${data?.purchaseCount || 0}`,
+      `Itens registrados: ${data?.itemCount || 0}`,
+      `Produtos diferentes: ${data?.uniqueItems || 0}`,
+      `Total gasto: ${brl(data?.totalSpent)}`
     ];
 
-    if (/mais caro|mais cara|preco|precos/.test(text)) {
-      if (data?.highestUnit) lines.push(`• Item com maior preço unitário: ${data.highestUnit.name} — ${brl(data.highestUnit.unitPrice)}${data.highestUnit.establishment ? ` em ${data.highestUnit.establishment}` : ''}.`);
-      if (data?.highestLine) lines.push(`• Maior valor em uma linha de compra: ${data.highestLine.name} — ${brl(data.highestLine.lineTotal)}.`);
-      if (topPrice.length) lines.push('• Maiores preços unitários: ' + topPrice.slice(0, 5).map((item, index) => `${index + 1}) ${item.name}: ${brl(item.maxUnitPrice)}`).join(' | '));
+    if (wantsSpend && topSpend.length) {
+      lines.push('', `MAIORES GASTOS POR PRODUTO — TOP ${Math.min(topN, topSpend.length)}`);
+      topSpend.slice(0, topN).forEach((item, index) => {
+        lines.push(`${index + 1}. ${item.name}`);
+        lines.push(`   Total: ${brl(item.totalSpent)} • Comprado: ${vezes(item.occurrences)}`);
+      });
     }
 
-    if (/gasto|gastei|mais|ranking|item|produto|compras/.test(text) && topSpend.length) {
-      lines.push('• Itens em que você mais gastou: ' + topSpend.slice(0, 8).map((item, index) => `${index + 1}) ${item.name}: ${brl(item.totalSpent)} (${item.occurrences} ocorrência(s))`).join(' | '));
+    if (wantsPrice) {
+      if (data?.highestUnit) {
+        lines.push('', 'ITEM MAIS CARO POR UNIDADE');
+        lines.push(`${data.highestUnit.name}`);
+        lines.push(`Preço unitário: ${brl(data.highestUnit.unitPrice)}${data.highestUnit.establishment ? ` • Local: ${data.highestUnit.establishment}` : ''}`);
+      }
+      if (data?.highestLine) {
+        lines.push('', 'MAIOR VALOR EM UMA ÚNICA LINHA DE COMPRA');
+        lines.push(`${data.highestLine.name}: ${brl(data.highestLine.lineTotal)}`);
+      }
+      if (topPrice.length && !data?.highestUnit) {
+        lines.push('', `MAIORES PREÇOS UNITÁRIOS — TOP ${Math.min(topN, topPrice.length)}`);
+        topPrice.slice(0, topN).forEach((item, index) => lines.push(`${index + 1}. ${item.name}: ${brl(item.maxUnitPrice)}`));
+      }
     }
 
-    if (data?.truncated) lines.push(`• Atenção: a leitura atingiu um limite de segurança (${data?.limits?.purchases || 0} compras / ${data?.limits?.items || 0} itens). O ranking pode ser parcial.`);
-    lines.push('• Consulta somente leitura. Nenhum documento foi alterado.');
+    if (topSpend.some((item) => /\b[a-z]{1,4}\b/i.test(String(item.name || '')))) {
+      lines.push('', 'Observação: alguns nomes vêm abreviados exatamente como foram registrados na nota fiscal.');
+    }
+    if (data?.truncated) {
+      lines.push('', `ATENÇÃO: a leitura atingiu o limite de segurança de ${data?.limits?.purchases || 0} compras / ${data?.limits?.items || 0} itens. O ranking pode ser parcial.`);
+    }
+    lines.push('', 'Fonte: Firestore do ListaLar • Modo somente leitura');
     return { answer: lines.join('\n'), firebaseOperational: true, analytics: data };
   };
 
@@ -137,12 +171,34 @@
 
   const formatFirestoreRead = (data) => {
     if (data?.kind === 'document') {
-      if (!data.exists) return { answer: `O documento ${data.path} não existe no Firestore do ListaLar. Consulta somente leitura.`, firebaseOperational: true };
-      return { answer: `Documento confirmado no Firestore do ListaLar: ${data.path}\n${JSON.stringify(data.data, null, 2)}${data.subcollections?.length ? `\nSubcoleções: ${data.subcollections.join(', ')}` : ''}\nConsulta somente leitura.`, firebaseOperational: true, firestoreRead: data };
+      if (!data.exists) return { answer: `LISTALAR — FIRESTORE\n\nDocumento não encontrado: ${data.path}\n\nFonte: Firestore • Modo somente leitura`, firebaseOperational: true };
+      const lines = [
+        'LISTALAR — DOCUMENTO DO FIRESTORE',
+        '',
+        `Caminho: ${data.path}`,
+        '',
+        JSON.stringify(data.data, null, 2)
+      ];
+      if (data.subcollections?.length) lines.push('', `Subcoleções: ${data.subcollections.join(', ')}`);
+      lines.push('', 'Fonte: Firestore • Modo somente leitura');
+      return { answer: lines.join('\n'), firebaseOperational: true, firestoreRead: data };
     }
     const docs = Array.isArray(data?.documents) ? data.documents : [];
-    const preview = docs.slice(0, 30).map((doc) => `• ${doc.id}: ${JSON.stringify(doc.data)}`).join('\n');
-    return { answer: `Coleção confirmada no Firestore do ListaLar: ${data?.path}. Retornados ${data?.returned || 0} documento(s), limite ${data?.limit || 0}.\n${preview || '(vazia)'}\nConsulta somente leitura.`, firebaseOperational: true, firestoreRead: data };
+    const lines = [
+      'LISTALAR — COLEÇÃO DO FIRESTORE',
+      '',
+      `Caminho: ${data?.path || ''}`,
+      `Documentos retornados: ${data?.returned || 0}`,
+      ''
+    ];
+    docs.slice(0, 20).forEach((doc, index) => {
+      lines.push(`${index + 1}. ${doc.id}`);
+      lines.push(`   ${JSON.stringify(doc.data)}`);
+    });
+    if (!docs.length) lines.push('(coleção vazia)');
+    if (docs.length > 20) lines.push('', `Mostrando 20 de ${docs.length} documentos retornados.`);
+    lines.push('', 'Fonte: Firestore • Modo somente leitura');
+    return { answer: lines.join('\n'), firebaseOperational: true, firestoreRead: data };
   };
 
   const isListaLarOperationalQuery = (prompt) => {
@@ -156,16 +212,37 @@
     const firestore = status?.firestore;
     const errors = Array.isArray(status?.errors) ? status.errors : [];
     if (/quantos|usuario|usuarios|cadastrad/.test(text) && auth) {
-      const suffix = auth.truncated ? ' (contagem limitada ao teto de segurança)' : '';
-      return { answer: `ListaLar tem ${auth.totalUsers}${suffix} usuário(s) cadastrado(s) no Firebase Authentication. Ativos: ${auth.enabledUsers}. Desativados: ${auth.disabledUsers}. E-mails verificados: ${auth.emailVerifiedUsers}. Usuários com login nos últimos 30 dias: ${auth.recentSignIns30d}.`, firebaseOperational: true, status };
+      const lines = [
+        'LISTALAR — USUÁRIOS',
+        '',
+        `Cadastrados: ${auth.totalUsers}${auth.truncated ? '+' : ''}`,
+        `Ativos: ${auth.enabledUsers}`,
+        `Desativados: ${auth.disabledUsers}`,
+        `E-mails verificados: ${auth.emailVerifiedUsers}`,
+        `Login nos últimos 30 dias: ${auth.recentSignIns30d}`,
+        '',
+        'Fonte: Firebase Authentication • Modo somente leitura'
+      ];
+      return { answer: lines.join('\n'), firebaseOperational: true, status };
     }
-    const lines = [
-      `Status operacional confirmado do ListaLar (${status?.projectId || 'compras-da-casa'}):`,
-      auth ? `• Authentication: ${auth.totalUsers}${auth.truncated ? '+' : ''} usuários; ${auth.enabledUsers} ativos; ${auth.disabledUsers} desativados; ${auth.recentSignIns30d} com login nos últimos 30 dias.` : '• Authentication: leitura indisponível.',
-      firestore ? `• Firestore: ${firestore.rootCollectionCount} coleções raiz${firestore.rootCollections?.length ? ` — ${firestore.rootCollections.join(', ')}` : ''}.` : '• Firestore: leitura indisponível.',
-      '• Modo do Nexus: somente leitura; nenhuma alteração foi executada.'
-    ];
-    if (errors.length) lines.push(`• Pendências de permissão/leitura: ${errors.map((item) => item.area).join(', ')}.`);
+    const lines = ['LISTALAR — STATUS OPERACIONAL', ''];
+    if (auth) {
+      lines.push('AUTHENTICATION');
+      lines.push(`Usuários: ${auth.totalUsers}${auth.truncated ? '+' : ''} • Ativos: ${auth.enabledUsers} • Desativados: ${auth.disabledUsers}`);
+      lines.push(`Login nos últimos 30 dias: ${auth.recentSignIns30d}`);
+    } else {
+      lines.push('AUTHENTICATION: leitura indisponível');
+    }
+    lines.push('');
+    if (firestore) {
+      lines.push('FIRESTORE');
+      lines.push(`Coleções raiz: ${firestore.rootCollectionCount}`);
+      if (firestore.rootCollections?.length) lines.push(firestore.rootCollections.join(', '));
+    } else {
+      lines.push('FIRESTORE: leitura indisponível');
+    }
+    if (errors.length) lines.push('', `Pendências: ${errors.map((item) => item.area).join(', ')}`);
+    lines.push('', 'Modo somente leitura • Nenhum dado foi alterado');
     return { answer: lines.join('\n'), firebaseOperational: true, status };
   };
 
@@ -186,7 +263,7 @@
             return formatSpendingAnalytics(result?.data || {}, prompt);
           } catch (error) {
             console.error('Nexus spending analytics failed', error);
-            return { answer: 'O Nexus tentou analisar os gastos reais do ListaLar no Firestore, mas a consulta falhou. Nenhum dado foi alterado.', firebaseOperational: true, error: true };
+            return { answer: 'Não consegui concluir a análise de gastos do ListaLar. Nenhum dado foi alterado.', firebaseOperational: true, error: true };
           }
         }
 
@@ -209,7 +286,7 @@
             return formatFirebaseOperationalAnswer(result?.data || {}, prompt);
           } catch (error) {
             console.error('Nexus Firebase operational query failed', error);
-            return { answer: 'O Nexus tentou consultar os dados reais do Firebase do ListaLar, mas a leitura operacional falhou. Nenhum dado foi alterado.', firebaseOperational: true, error: true };
+            return { answer: 'Não consegui consultar o status operacional do ListaLar. Nenhum dado foi alterado.', firebaseOperational: true, error: true };
           }
         }
         return rawAsk(augmentPrompt(prompt));
