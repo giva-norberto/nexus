@@ -30,7 +30,6 @@
     sessionStorage.setItem('nexusActiveProjectName', project.name);
     sessionStorage.setItem('nexusActiveRepository', project.repository);
   };
-
   const setFile = (file) => { if (file) sessionStorage.setItem('nexusActiveFile', file); };
   const detectProject = (prompt) => PROJECTS.find((project) => project.patterns.some((pattern) => pattern.test(prompt))) || null;
   const detectFile = (prompt) => String(prompt || '').match(FILE_RE)?.[1] || '';
@@ -77,12 +76,21 @@
     return /\blistalar\b|\blista lar\b|\bcompras-da-casa\b/.test(text) || getContext().key === 'listalar';
   };
 
-  const isListaLarSpendingQuery = (prompt) => {
+  const detectListaLarIntent = (prompt) => {
+    if (!mentionsListaLar(prompt)) return null;
     const text = normalize(prompt);
-    if (!mentionsListaLar(prompt)) return false;
-    return /gasto|gastos|gastei|mais caro|mais cara|caro|cara|preco|precos|item|itens|produto|produtos|compras|compra|ticket|ranking/.test(text)
-      && /mais|maior|ranking|gasto|caro|preco|item|produto|compras/.test(text);
+
+    if (/aument|subiu|subida|encarec|ficou mais caro|mudou de preco|mudanca de preco|variacao de preco|evolucao de preco|preco mudou|valor diferente|precos diferentes/.test(text)) return 'price_change_up';
+    if (/diminuiu|baixou|queda de preco|ficou mais barato|reduziu|barateou/.test(text)) return 'price_change_down';
+    if (/mais frequente|mais vezes|compro mais|comprado mais|qual.*mais compro|frequencia/.test(text)) return 'frequency';
+    if (/mais caro|mais cara|maior preco|preco unitario|maiores precos/.test(text)) return 'unit_price';
+    if (/gastei mais|mais gasto|maior gasto|gasto total.*produto|total.*produto|onde gasto mais|itens.*mais gasto|produtos.*mais gasto|ranking.*gasto/.test(text)) return 'total_spend';
+    if (/analise de compras|resumo de compras|total gasto|quanto gastei|compras analisadas/.test(text)) return 'summary';
+
+    return null;
   };
+
+  const isListaLarAnalyticsQuery = (prompt) => detectListaLarIntent(prompt) !== null;
 
   const requestedDays = (prompt) => {
     const text = normalize(prompt);
@@ -90,8 +98,6 @@
     if (explicit) return Math.min(3650, Math.max(1, Number(explicit[1])));
     if (/este mes|mes atual|neste mes/.test(text)) return 31;
     if (/este ano|ano atual|neste ano/.test(text)) return 365;
-    if (/ultimos? 30 dias/.test(text)) return 30;
-    if (/ultimos? 90 dias/.test(text)) return 90;
     return null;
   };
 
@@ -103,18 +109,99 @@
   };
 
   const brl = (value) => Number(value || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  const pct = (value) => `${Number(value || 0) > 0 ? '+' : ''}${Number(value || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`;
   const vezes = (value) => `${Number(value || 0)} ${Number(value || 0) === 1 ? 'vez' : 'vezes'}`;
+  const brDate = (value) => {
+    if (!value) return 'data não disponível';
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? 'data não disponível' : date.toLocaleDateString('pt-BR');
+  };
+
+  const addSource = (lines, data) => {
+    if (data?.truncated) lines.push('', `ATENÇÃO: leitura limitada a ${data?.limits?.purchases || 0} compras / ${data?.limits?.items || 0} itens; o resultado pode ser parcial.`);
+    lines.push('', 'Fonte: Firestore do ListaLar • Modo somente leitura');
+  };
+
+  const formatPriceChanges = (data, prompt, direction) => {
+    const topN = requestedTopN(prompt, 5);
+    const items = direction === 'down'
+      ? (Array.isArray(data?.topPriceDecreases) ? data.topPriceDecreases : [])
+      : (Array.isArray(data?.topPriceIncreases) ? data.topPriceIncreases : []);
+    const changed = Array.isArray(data?.changedPriceItems) ? data.changedPriceItems : [];
+    const lines = ['LISTALAR — EVOLUÇÃO DE PREÇOS', ''];
+
+    lines.push(`Produtos com histórico comparável: ${data?.priceComparableItems || 0}`);
+    lines.push(`Produtos com mudança de preço detectada: ${changed.length}${changed.length >= 30 ? '+' : ''}`);
+
+    if (!items.length) {
+      lines.push('', direction === 'down'
+        ? 'Não encontrei produto com queda de preço confirmada no histórico comparável.'
+        : 'Não encontrei produto com aumento de preço confirmado no histórico comparável.');
+      addSource(lines, data);
+      return { answer: lines.join('\n'), firebaseOperational: true, analytics: data };
+    }
+
+    lines.push('', direction === 'down' ? `MAIORES QUEDAS — TOP ${Math.min(topN, items.length)}` : `MAIORES AUMENTOS — TOP ${Math.min(topN, items.length)}`);
+    items.slice(0, topN).forEach((item, index) => {
+      lines.push(`${index + 1}. ${item.name}`);
+      lines.push(`   Primeiro preço: ${brl(item.firstUnitPrice)} (${brDate(item.firstPriceDate)})`);
+      lines.push(`   Último preço: ${brl(item.lastUnitPrice)} (${brDate(item.lastPriceDate)})`);
+      lines.push(`   Variação: ${brl(item.priceChange)} • ${pct(item.priceChangePct)}`);
+      lines.push(`   Menor: ${brl(item.minUnitPrice)} • Maior: ${brl(item.maxUnitPrice)} • Comprado: ${vezes(item.occurrences)}`);
+    });
+    addSource(lines, data);
+    return { answer: lines.join('\n'), firebaseOperational: true, analytics: data };
+  };
 
   const formatSpendingAnalytics = (data, prompt) => {
-    const text = normalize(prompt);
+    const intent = detectListaLarIntent(prompt) || 'summary';
     const period = data?.periodDays ? `Últimos ${data.periodDays} dias` : 'Todo o histórico disponível';
+    const topN = requestedTopN(prompt, 5);
     const topSpend = Array.isArray(data?.topBySpend) ? data.topBySpend : [];
     const topPrice = Array.isArray(data?.topByUnitPrice) ? data.topByUnitPrice : [];
-    const topN = requestedTopN(prompt, 5);
-    const wantsPrice = /mais caro|mais cara|preco|precos/.test(text);
-    const wantsSpend = /gasto|gastei|mais|ranking|item|produto|compras/.test(text);
+    const topFrequency = Array.isArray(data?.topByOccurrences) ? data.topByOccurrences : [];
+
+    if (intent === 'price_change_up') return formatPriceChanges(data, prompt, 'up');
+    if (intent === 'price_change_down') return formatPriceChanges(data, prompt, 'down');
+
+    if (intent === 'unit_price') {
+      const lines = ['LISTALAR — ITENS MAIS CAROS', '', `Período: ${period}`];
+      if (data?.highestUnit) {
+        lines.push('', 'MAIOR PREÇO UNITÁRIO');
+        lines.push(data.highestUnit.name);
+        lines.push(`Preço: ${brl(data.highestUnit.unitPrice)}${data.highestUnit.establishment ? ` • Local: ${data.highestUnit.establishment}` : ''}${data.highestUnit.date ? ` • Data: ${brDate(data.highestUnit.date)}` : ''}`);
+      }
+      if (topPrice.length) {
+        lines.push('', `MAIORES PREÇOS UNITÁRIOS — TOP ${Math.min(topN, topPrice.length)}`);
+        topPrice.slice(0, topN).forEach((item, index) => lines.push(`${index + 1}. ${item.name} — ${brl(item.maxUnitPrice)}`));
+      }
+      addSource(lines, data);
+      return { answer: lines.join('\n'), firebaseOperational: true, analytics: data };
+    }
+
+    if (intent === 'frequency') {
+      const lines = ['LISTALAR — PRODUTOS MAIS COMPRADOS', '', `Período: ${period}`];
+      topFrequency.slice(0, topN).forEach((item, index) => {
+        lines.push(`${index + 1}. ${item.name}`);
+        lines.push(`   Comprado: ${vezes(item.occurrences)} • Total gasto: ${brl(item.totalSpent)}`);
+      });
+      addSource(lines, data);
+      return { answer: lines.join('\n'), firebaseOperational: true, analytics: data };
+    }
+
+    if (intent === 'total_spend') {
+      const lines = ['LISTALAR — MAIORES GASTOS ACUMULADOS POR PRODUTO', '', `Período: ${period}`];
+      topSpend.slice(0, topN).forEach((item, index) => {
+        lines.push(`${index + 1}. ${item.name}`);
+        lines.push(`   Total gasto no período: ${brl(item.totalSpent)}`);
+        lines.push(`   Comprado: ${vezes(item.occurrences)} • Preço médio estimado: ${brl(item.avgUnitPrice)}`);
+      });
+      addSource(lines, data);
+      return { answer: lines.join('\n'), firebaseOperational: true, analytics: data };
+    }
+
     const lines = [
-      'LISTALAR — ANÁLISE DE COMPRAS',
+      'LISTALAR — RESUMO DE COMPRAS',
       '',
       `Período: ${period}`,
       `Compras analisadas: ${data?.purchaseCount || 0}`,
@@ -122,38 +209,7 @@
       `Produtos diferentes: ${data?.uniqueItems || 0}`,
       `Total gasto: ${brl(data?.totalSpent)}`
     ];
-
-    if (wantsSpend && topSpend.length) {
-      lines.push('', `MAIORES GASTOS POR PRODUTO — TOP ${Math.min(topN, topSpend.length)}`);
-      topSpend.slice(0, topN).forEach((item, index) => {
-        lines.push(`${index + 1}. ${item.name}`);
-        lines.push(`   Total: ${brl(item.totalSpent)} • Comprado: ${vezes(item.occurrences)}`);
-      });
-    }
-
-    if (wantsPrice) {
-      if (data?.highestUnit) {
-        lines.push('', 'ITEM MAIS CARO POR UNIDADE');
-        lines.push(`${data.highestUnit.name}`);
-        lines.push(`Preço unitário: ${brl(data.highestUnit.unitPrice)}${data.highestUnit.establishment ? ` • Local: ${data.highestUnit.establishment}` : ''}`);
-      }
-      if (data?.highestLine) {
-        lines.push('', 'MAIOR VALOR EM UMA ÚNICA LINHA DE COMPRA');
-        lines.push(`${data.highestLine.name}: ${brl(data.highestLine.lineTotal)}`);
-      }
-      if (topPrice.length && !data?.highestUnit) {
-        lines.push('', `MAIORES PREÇOS UNITÁRIOS — TOP ${Math.min(topN, topPrice.length)}`);
-        topPrice.slice(0, topN).forEach((item, index) => lines.push(`${index + 1}. ${item.name}: ${brl(item.maxUnitPrice)}`));
-      }
-    }
-
-    if (topSpend.some((item) => /\b[a-z]{1,4}\b/i.test(String(item.name || '')))) {
-      lines.push('', 'Observação: alguns nomes vêm abreviados exatamente como foram registrados na nota fiscal.');
-    }
-    if (data?.truncated) {
-      lines.push('', `ATENÇÃO: a leitura atingiu o limite de segurança de ${data?.limits?.purchases || 0} compras / ${data?.limits?.items || 0} itens. O ranking pode ser parcial.`);
-    }
-    lines.push('', 'Fonte: Firestore do ListaLar • Modo somente leitura');
+    addSource(lines, data);
     return { answer: lines.join('\n'), firebaseOperational: true, analytics: data };
   };
 
@@ -162,7 +218,6 @@
     return mentionsListaLar(prompt) && /(?:colecao|documento|caminho)\s+[a-z0-9_-]+(?:\/[a-z0-9_-]+)*/.test(text)
       && /abra|leia|liste|mostre|ver|acessar|acesse|documentos/.test(text);
   };
-
   const extractFirestorePath = (prompt) => {
     const text = normalize(prompt);
     const match = text.match(/(?:colecao|documento|caminho)\s+([a-z0-9_-]+(?:\/[a-z0-9_-]+)*)/);
@@ -172,25 +227,13 @@
   const formatFirestoreRead = (data) => {
     if (data?.kind === 'document') {
       if (!data.exists) return { answer: `LISTALAR — FIRESTORE\n\nDocumento não encontrado: ${data.path}\n\nFonte: Firestore • Modo somente leitura`, firebaseOperational: true };
-      const lines = [
-        'LISTALAR — DOCUMENTO DO FIRESTORE',
-        '',
-        `Caminho: ${data.path}`,
-        '',
-        JSON.stringify(data.data, null, 2)
-      ];
+      const lines = ['LISTALAR — DOCUMENTO DO FIRESTORE', '', `Caminho: ${data.path}`, '', JSON.stringify(data.data, null, 2)];
       if (data.subcollections?.length) lines.push('', `Subcoleções: ${data.subcollections.join(', ')}`);
       lines.push('', 'Fonte: Firestore • Modo somente leitura');
       return { answer: lines.join('\n'), firebaseOperational: true, firestoreRead: data };
     }
     const docs = Array.isArray(data?.documents) ? data.documents : [];
-    const lines = [
-      'LISTALAR — COLEÇÃO DO FIRESTORE',
-      '',
-      `Caminho: ${data?.path || ''}`,
-      `Documentos retornados: ${data?.returned || 0}`,
-      ''
-    ];
+    const lines = ['LISTALAR — COLEÇÃO DO FIRESTORE', '', `Caminho: ${data?.path || ''}`, `Documentos retornados: ${data?.returned || 0}`, ''];
     docs.slice(0, 20).forEach((doc, index) => {
       lines.push(`${index + 1}. ${doc.id}`);
       lines.push(`   ${JSON.stringify(doc.data)}`);
@@ -213,15 +256,13 @@
     const errors = Array.isArray(status?.errors) ? status.errors : [];
     if (/quantos|usuario|usuarios|cadastrad/.test(text) && auth) {
       const lines = [
-        'LISTALAR — USUÁRIOS',
-        '',
+        'LISTALAR — USUÁRIOS', '',
         `Cadastrados: ${auth.totalUsers}${auth.truncated ? '+' : ''}`,
         `Ativos: ${auth.enabledUsers}`,
         `Desativados: ${auth.disabledUsers}`,
         `E-mails verificados: ${auth.emailVerifiedUsers}`,
         `Login nos últimos 30 dias: ${auth.recentSignIns30d}`,
-        '',
-        'Fonte: Firebase Authentication • Modo somente leitura'
+        '', 'Fonte: Firebase Authentication • Modo somente leitura'
       ];
       return { answer: lines.join('\n'), firebaseOperational: true, status };
     }
@@ -230,17 +271,13 @@
       lines.push('AUTHENTICATION');
       lines.push(`Usuários: ${auth.totalUsers}${auth.truncated ? '+' : ''} • Ativos: ${auth.enabledUsers} • Desativados: ${auth.disabledUsers}`);
       lines.push(`Login nos últimos 30 dias: ${auth.recentSignIns30d}`);
-    } else {
-      lines.push('AUTHENTICATION: leitura indisponível');
-    }
+    } else lines.push('AUTHENTICATION: leitura indisponível');
     lines.push('');
     if (firestore) {
       lines.push('FIRESTORE');
       lines.push(`Coleções raiz: ${firestore.rootCollectionCount}`);
       if (firestore.rootCollections?.length) lines.push(firestore.rootCollections.join(', '));
-    } else {
-      lines.push('FIRESTORE: leitura indisponível');
-    }
+    } else lines.push('FIRESTORE: leitura indisponível');
     if (errors.length) lines.push('', `Pendências: ${errors.map((item) => item.area).join(', ')}`);
     lines.push('', 'Modo somente leitura • Nenhum dado foi alterado');
     return { answer: lines.join('\n'), firebaseOperational: true, status };
@@ -256,14 +293,14 @@
         const project = detectProject(String(prompt || ''));
         if (project) setProject(project);
 
-        if (isListaLarSpendingQuery(prompt)) {
+        if (isListaLarAnalyticsQuery(prompt)) {
           try {
             const analyticsFn = await getCallable('firebaseSpendingAnalytics');
             const result = await analyticsFn({ project: 'listalar', days: requestedDays(prompt) });
             return formatSpendingAnalytics(result?.data || {}, prompt);
           } catch (error) {
-            console.error('Nexus spending analytics failed', error);
-            return { answer: 'Não consegui concluir a análise de gastos do ListaLar. Nenhum dado foi alterado.', firebaseOperational: true, error: true };
+            console.error('Nexus ListaLar analytics failed', error);
+            return { answer: 'Não consegui concluir essa análise do ListaLar. Nenhum dado foi alterado.', firebaseOperational: true, error: true };
           }
         }
 
