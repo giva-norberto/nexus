@@ -3,13 +3,13 @@ const conversationMemory = require('./conversation-memory');
 const firebaseObserver = require('./firebase-observer');
 const firestoreExplorer = require('./firestore-explorer');
 const agentCore = require('./agent-core');
-const agentCoreV13 = require('./agent-core-v13');
+const agentCoreV14 = require('./agent-core-v14');
 
 module.exports = {
   ...core,
   ...conversationMemory,
   ...agentCore,
-  askNexusAgent: agentCoreV13.askNexusAgent,
+  askNexusAgent: agentCoreV14.askNexusAgent,
   firebaseProjectStatus: firebaseObserver.firebaseProjectStatus,
   firebaseFirestoreRead: firestoreExplorer.firebaseFirestoreRead,
   firebaseSpendingAnalytics: firestoreExplorer.firebaseSpendingAnalytics
