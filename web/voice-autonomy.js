@@ -1,12 +1,17 @@
-// Nexus Voice + Autonomy v1
-// Voz usa recursos nativos do navegador. Autonomia v1 executa ciclos reais de
-// observação/investigação somente leitura pelo Agent Core existente.
+// Nexus Voice + Autonomy v1.1
+// Voz usa recursos nativos do navegador com proteção específica para mobile/WebKit.
+// Autonomia continua somente leitura pelo Agent Core existente.
 (() => {
   const STORAGE = {
     voiceEnabled: 'nexusVoiceEnabled',
     autoSendVoice: 'nexusVoiceAutoSend',
     autonomyEnabled: 'nexusAutonomyEnabled'
   };
+
+  const MOBILE_RE = /Android|iPhone|iPad|iPod|Mobile/i;
+  const isMobile = MOBILE_RE.test(navigator.userAgent || '');
+  const hasSpeechSynthesis = 'speechSynthesis' in window && 'SpeechSynthesisUtterance' in window;
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition || null;
 
   const state = {
     listening: false,
@@ -15,10 +20,14 @@
     autonomyRunning: false,
     voiceEnabled: localStorage.getItem(STORAGE.voiceEnabled) !== 'false',
     autoSendVoice: localStorage.getItem(STORAGE.autoSendVoice) !== 'false',
-    autonomyEnabled: localStorage.getItem(STORAGE.autonomyEnabled) !== 'false'
+    autonomyEnabled: localStorage.getItem(STORAGE.autonomyEnabled) !== 'false',
+    audioUnlocked: !isMobile,
+    pendingSpeech: '',
+    speechQueue: [],
+    activeUtterance: null,
+    speechGeneration: 0,
+    voiceRetry: 0
   };
-
-  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition || null;
 
   function normalize(value) {
     return String(value || '')
@@ -37,30 +46,202 @@
       .replace(/\[(.*?)\]\([^)]*\)/g, '$1')
       .replace(/\s+/g, ' ')
       .trim()
-      .slice(0, 3500);
+      .slice(0, 5000);
+  }
+
+  function splitForMobileSpeech(text, maxLength = 240) {
+    const cleaned = stripForSpeech(text);
+    if (!cleaned) return [];
+    const sentences = cleaned.match(/[^.!?;:]+[.!?;:]?|[^.!?;:]+$/g) || [cleaned];
+    const chunks = [];
+    let current = '';
+
+    for (const sentenceRaw of sentences) {
+      const sentence = sentenceRaw.trim();
+      if (!sentence) continue;
+      if ((current + ' ' + sentence).trim().length <= maxLength) {
+        current = (current + ' ' + sentence).trim();
+        continue;
+      }
+      if (current) chunks.push(current);
+      if (sentence.length <= maxLength) {
+        current = sentence;
+        continue;
+      }
+      const words = sentence.split(/\s+/);
+      current = '';
+      for (const word of words) {
+        if ((current + ' ' + word).trim().length > maxLength && current) {
+          chunks.push(current);
+          current = word;
+        } else {
+          current = (current + ' ' + word).trim();
+        }
+      }
+    }
+    if (current) chunks.push(current);
+    return chunks;
   }
 
   function choosePortugueseVoice() {
-    if (!('speechSynthesis' in window)) return null;
+    if (!hasSpeechSynthesis) return null;
     const voices = window.speechSynthesis.getVoices();
     return voices.find((voice) => /^pt-BR$/i.test(voice.lang)) ||
       voices.find((voice) => /^pt[-_]/i.test(voice.lang)) ||
+      voices.find((voice) => /portugu/i.test(voice.name || '')) ||
       null;
   }
 
-  function speak(text) {
-    if (!state.voiceEnabled || !('speechSynthesis' in window)) return;
-    const cleaned = stripForSpeech(text);
-    if (!cleaned) return;
+  function updateAudioButton() {
+    const button = document.getElementById('nexusAudioBtn');
+    if (!button) return;
+    if (!hasSpeechSynthesis) {
+      button.textContent = '🔇';
+      button.title = 'Síntese de voz indisponível neste navegador';
+      button.disabled = true;
+      return;
+    }
+    button.textContent = state.audioUnlocked && state.voiceEnabled ? '🔊' : '🔈';
+    button.title = state.audioUnlocked ? 'Testar voz do Nexus' : 'Ativar áudio do Nexus';
+    button.setAttribute('aria-pressed', state.audioUnlocked && state.voiceEnabled ? 'true' : 'false');
+    button.style.borderColor = state.audioUnlocked && state.voiceEnabled ? 'var(--ok)' : '';
+    button.style.color = state.audioUnlocked && state.voiceEnabled ? 'var(--ok)' : '';
+  }
 
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(cleaned);
+  function setAudioStatus(text) {
+    const status = document.getElementById('nexusMobileAudioStatus');
+    if (status) status.textContent = text;
+  }
+
+  function stopSpeaking() {
+    if (!hasSpeechSynthesis) return;
+    state.speechGeneration += 1;
+    state.speechQueue = [];
+    state.activeUtterance = null;
+    state.voiceRetry = 0;
+    if (window.speechSynthesis.speaking || window.speechSynthesis.pending || window.speechSynthesis.paused) {
+      try { window.speechSynthesis.cancel(); } catch (_) {}
+    }
+  }
+
+  function playNextSpeech(generation) {
+    if (!hasSpeechSynthesis || generation !== state.speechGeneration || !state.voiceEnabled) return;
+    if (!state.speechQueue.length) {
+      state.activeUtterance = null;
+      state.voiceRetry = 0;
+      setAudioStatus(state.audioUnlocked ? 'Áudio móvel ativo.' : 'Toque em 🔈 para ativar o áudio no celular.');
+      return;
+    }
+
+    const voice = choosePortugueseVoice();
+    if (!voice && window.speechSynthesis.getVoices().length === 0 && state.voiceRetry < 6) {
+      state.voiceRetry += 1;
+      setTimeout(() => playNextSpeech(generation), 180);
+      return;
+    }
+    state.voiceRetry = 0;
+
+    const chunk = state.speechQueue.shift();
+    const utterance = new SpeechSynthesisUtterance(chunk);
     utterance.lang = 'pt-BR';
     utterance.rate = 0.98;
     utterance.pitch = 1;
-    const voice = choosePortugueseVoice();
+    utterance.volume = 1;
     if (voice) utterance.voice = voice;
-    window.speechSynthesis.speak(utterance);
+
+    state.activeUtterance = utterance; // mantém referência viva em navegadores móveis.
+    utterance.onstart = () => setAudioStatus('Nexus falando...');
+    utterance.onend = () => {
+      if (generation !== state.speechGeneration) return;
+      state.activeUtterance = null;
+      setTimeout(() => playNextSpeech(generation), 35);
+    };
+    utterance.onerror = (event) => {
+      const error = String(event?.error || 'erro');
+      if (generation !== state.speechGeneration) return;
+      state.activeUtterance = null;
+      if (!/canceled|interrupted/i.test(error)) {
+        console.warn('Nexus speech synthesis error', error);
+        setAudioStatus(`Falha de áudio (${error}). Toque em 🔊 para testar novamente.`);
+      }
+      setTimeout(() => playNextSpeech(generation), 100);
+    };
+
+    try {
+      if (window.speechSynthesis.paused) window.speechSynthesis.resume();
+      window.speechSynthesis.speak(utterance);
+    } catch (error) {
+      console.error('Nexus speech synthesis failed', error);
+      setAudioStatus('Não consegui iniciar o áudio. Toque em 🔊 para tentar novamente.');
+    }
+  }
+
+  function startSpeech(text, { replace = true } = {}) {
+    if (!state.voiceEnabled || !hasSpeechSynthesis) return;
+    const chunks = splitForMobileSpeech(text);
+    if (!chunks.length) return;
+
+    // Em WebKit antigo, cancel() seguido imediatamente de speak() pode eliminar a nova fala.
+    // Só cancelamos quando existe fala real em andamento e aguardamos antes de recomeçar.
+    const wasActive = window.speechSynthesis.speaking || window.speechSynthesis.pending || window.speechSynthesis.paused;
+    if (replace) {
+      state.speechGeneration += 1;
+      state.speechQueue = chunks;
+      state.activeUtterance = null;
+      state.voiceRetry = 0;
+      if (wasActive) {
+        try { window.speechSynthesis.cancel(); } catch (_) {}
+        const generation = state.speechGeneration;
+        setTimeout(() => playNextSpeech(generation), 180);
+        return;
+      }
+    } else {
+      state.speechQueue.push(...chunks);
+    }
+
+    playNextSpeech(state.speechGeneration);
+  }
+
+  function speak(text) {
+    if (!state.voiceEnabled || !hasSpeechSynthesis) return;
+    const cleaned = stripForSpeech(text);
+    if (!cleaned) return;
+
+    if (isMobile && !state.audioUnlocked) {
+      state.pendingSpeech = cleaned;
+      setAudioStatus('Toque em 🔈 uma vez para liberar o áudio no celular.');
+      updateAudioButton();
+      return;
+    }
+    startSpeech(cleaned, { replace: true });
+  }
+
+  function unlockAudio({ announce = true } = {}) {
+    if (!hasSpeechSynthesis) {
+      window.nexusAddMsg?.('assistant', 'A síntese de voz não está disponível neste navegador.');
+      return;
+    }
+
+    state.voiceEnabled = true;
+    state.audioUnlocked = true;
+    localStorage.setItem(STORAGE.voiceEnabled, 'true');
+    try { window.speechSynthesis.resume(); } catch (_) {}
+    updateAudioButton();
+    setAudioStatus('Áudio móvel liberado.');
+
+    const pending = state.pendingSpeech;
+    state.pendingSpeech = '';
+    if (announce) {
+      const text = pending ? `Áudio do Nexus ativado. ${pending}` : 'Áudio do Nexus ativado.';
+      startSpeech(text, { replace: true });
+    } else if (pending) {
+      startSpeech(pending, { replace: true });
+    }
+  }
+
+  function testAudio() {
+    unlockAudio({ announce: false });
+    startSpeech('Teste de áudio. A voz do Nexus está funcionando neste celular.', { replace: true });
   }
 
   function setButtonListening(button, listening) {
@@ -92,6 +273,11 @@
     const micButton = document.getElementById('nexusMicBtn');
     if (!input) return;
 
+    // O toque no microfone também autoriza futuras respostas faladas no celular.
+    state.audioUnlocked = true;
+    updateAudioButton();
+    stopSpeaking();
+
     const recognition = new SpeechRecognition();
     recognition.lang = 'pt-BR';
     recognition.continuous = false;
@@ -105,7 +291,6 @@
       state.listening = true;
       setButtonListening(micButton, true);
       input.placeholder = 'Ouvindo... fale com o Nexus';
-      if ('speechSynthesis' in window) window.speechSynthesis.cancel();
     };
 
     recognition.onresult = (event) => {
@@ -134,7 +319,7 @@
       input.placeholder = 'Pergunte ao Nexus...';
       const finalText = String(input.value || '').trim();
       if (state.autoSendVoice && finalText) {
-        setTimeout(() => document.getElementById('composer')?.requestSubmit(), 80);
+        setTimeout(() => document.getElementById('composer')?.requestSubmit(), 120);
       }
     };
 
@@ -152,7 +337,6 @@
       const label = normalize(rule.querySelector('span')?.textContent);
       const value = rule.querySelector('strong');
       if (!value) return;
-
       if (label === 'abrir pr') {
         value.textContent = 'PRÓXIMA ETAPA';
         value.classList.add('block');
@@ -164,24 +348,38 @@
     });
 
     [...document.querySelectorAll('header .badge')].forEach((badge) => {
-      if (/^v0\.7$/i.test(badge.textContent.trim())) badge.textContent = 'v0.8';
+      if (/^v0\.(7|8)$/i.test(badge.textContent.trim())) badge.textContent = 'v0.8.1';
     });
   }
 
   function ensureVoiceControls() {
     const composer = document.getElementById('composer');
     const sendButton = document.getElementById('sendBtn');
-    if (!composer || !sendButton || document.getElementById('nexusMicBtn')) return;
+    if (!composer || !sendButton) return;
 
-    const mic = document.createElement('button');
-    mic.id = 'nexusMicBtn';
-    mic.className = 'btn';
-    mic.type = 'button';
-    mic.textContent = '🎙';
-    mic.title = SpeechRecognition ? 'Falar com o Nexus' : 'Voz indisponível neste navegador';
-    mic.setAttribute('aria-label', 'Falar com o Nexus');
-    mic.addEventListener('click', startListening);
-    composer.insertBefore(mic, sendButton);
+    if (!document.getElementById('nexusAudioBtn')) {
+      const audio = document.createElement('button');
+      audio.id = 'nexusAudioBtn';
+      audio.className = 'btn';
+      audio.type = 'button';
+      audio.textContent = state.audioUnlocked ? '🔊' : '🔈';
+      audio.setAttribute('aria-label', 'Ativar ou testar voz do Nexus');
+      audio.addEventListener('click', testAudio);
+      composer.insertBefore(audio, sendButton);
+    }
+
+    if (!document.getElementById('nexusMicBtn')) {
+      const mic = document.createElement('button');
+      mic.id = 'nexusMicBtn';
+      mic.className = 'btn';
+      mic.type = 'button';
+      mic.textContent = '🎙';
+      mic.title = SpeechRecognition ? 'Falar com o Nexus' : 'Voz indisponível neste navegador';
+      mic.setAttribute('aria-label', 'Falar com o Nexus');
+      mic.addEventListener('click', startListening);
+      composer.insertBefore(mic, sendButton);
+    }
+    updateAudioButton();
   }
 
   function createSwitch(id, label, checked, onChange) {
@@ -192,17 +390,14 @@
     row.style.gap = '10px';
     row.style.fontSize = '12px';
     row.style.padding = '5px 0';
-
     const text = document.createElement('span');
     text.textContent = label;
-
     const input = document.createElement('input');
     input.id = id;
     input.type = 'checkbox';
     input.checked = checked;
     input.style.width = 'auto';
     input.addEventListener('change', () => onChange(input.checked));
-
     row.append(text, input);
     return row;
   }
@@ -214,32 +409,46 @@
     const section = document.createElement('div');
     section.className = 'sec';
     section.id = 'nexusVoiceAutonomyPanel';
-
     const title = document.createElement('h2');
     title.textContent = 'Voz + Autonomia';
-
     const card = document.createElement('div');
     card.className = 'card';
     card.innerHTML = `
-      <div class="t">Nexus Voice + Autonomy v1</div>
-      <div class="s">Voz pelo navegador e ciclo autônomo real de investigação, somente leitura.</div>
+      <div class="t">Nexus Voice + Autonomy v1.1</div>
+      <div class="s">Voz com compatibilidade móvel reforçada e ciclo autônomo real de investigação, somente leitura.</div>
     `;
+
+    const mobileStatus = document.createElement('div');
+    mobileStatus.id = 'nexusMobileAudioStatus';
+    mobileStatus.className = 's';
+    mobileStatus.style.margin = '8px 0';
+    mobileStatus.textContent = hasSpeechSynthesis
+      ? (state.audioUnlocked ? 'Áudio móvel ativo.' : 'No celular, toque em 🔈 ao lado de Enviar para liberar o áudio.')
+      : 'Síntese de voz indisponível neste navegador.';
+    card.appendChild(mobileStatus);
 
     card.appendChild(createSwitch('nexusVoiceToggle', 'Responder com voz', state.voiceEnabled, (checked) => {
       state.voiceEnabled = checked;
       localStorage.setItem(STORAGE.voiceEnabled, String(checked));
-      if (!checked && 'speechSynthesis' in window) window.speechSynthesis.cancel();
+      if (!checked) stopSpeaking();
+      updateAudioButton();
     }));
-
     card.appendChild(createSwitch('nexusAutoSendVoiceToggle', 'Enviar ao terminar de falar', state.autoSendVoice, (checked) => {
       state.autoSendVoice = checked;
       localStorage.setItem(STORAGE.autoSendVoice, String(checked));
     }));
-
     card.appendChild(createSwitch('nexusAutonomyToggle', 'Autonomia segura', state.autonomyEnabled, (checked) => {
       state.autonomyEnabled = checked;
       localStorage.setItem(STORAGE.autonomyEnabled, String(checked));
     }));
+
+    const test = document.createElement('button');
+    test.className = 'btn';
+    test.type = 'button';
+    test.textContent = 'Testar áudio';
+    test.style.marginTop = '8px';
+    test.addEventListener('click', testAudio);
+    card.appendChild(test);
 
     const policy = document.createElement('div');
     policy.className = 's';
@@ -328,17 +537,43 @@
     observer.observe(feed, { childList: true });
   }
 
+  function installMobileRecovery() {
+    if (!hasSpeechSynthesis) return;
+    const resume = () => {
+      if (!state.audioUnlocked || !state.voiceEnabled) return;
+      try {
+        if (window.speechSynthesis.paused) window.speechSynthesis.resume();
+      } catch (_) {}
+    };
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') setTimeout(resume, 120);
+    });
+    window.addEventListener('pageshow', () => setTimeout(resume, 120));
+    window.addEventListener('focus', () => setTimeout(resume, 120));
+    if ('onvoiceschanged' in window.speechSynthesis) {
+      window.speechSynthesis.addEventListener?.('voiceschanged', () => {
+        if (state.speechQueue.length && !window.speechSynthesis.speaking) {
+          playNextSpeech(state.speechGeneration);
+        }
+      });
+    }
+  }
+
   function init() {
     ensureVoiceControls();
     ensureSidebarControls();
     updateGovernanceDisplay();
     observeAssistantMessages();
+    installMobileRecovery();
     window.runAutonomy = runAutonomy;
     window.nexusVoice = {
       speak,
       start: startListening,
       stop: stopListening,
-      getState: () => ({ ...state, recognition: undefined })
+      unlock: unlockAudio,
+      test: testAudio,
+      stopSpeaking,
+      getState: () => ({ ...state, recognition: undefined, activeUtterance: undefined, speechQueue: [...state.speechQueue] })
     };
   }
 
