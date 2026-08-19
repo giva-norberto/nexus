@@ -1,4 +1,4 @@
-// Nexus Voice + Autonomy v1.1
+// Nexus Voice + Autonomy v1.2
 // Voz usa recursos nativos do navegador com proteção específica para mobile/WebKit.
 // Autonomia continua somente leitura pelo Agent Core existente.
 (() => {
@@ -12,6 +12,16 @@
   const isMobile = MOBILE_RE.test(navigator.userAgent || '');
   const hasSpeechSynthesis = 'speechSynthesis' in window && 'SpeechSynthesisUtterance' in window;
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition || null;
+
+  const MALE_VOICE_HINTS = [
+    'felipe', 'daniel', 'antonio', 'antônio', 'paulo', 'joao', 'joão', 'jorge',
+    'carlos', 'ricardo', 'thiago', 'tiago', 'eduardo', 'rafael', 'marcelo', 'bruno'
+  ];
+  const FEMALE_VOICE_HINTS = [
+    'luciana', 'francisca', 'leticia', 'letícia', 'mariana', 'camila', 'fernanda',
+    'vitoria', 'vitória', 'helena', 'paulina', 'maria'
+  ];
+  const NATURAL_VOICE_HINTS = ['natural', 'neural', 'enhanced', 'premium', 'online'];
 
   const state = {
     listening: false,
@@ -83,13 +93,34 @@
     return chunks;
   }
 
+  function voiceScore(voice) {
+    const name = normalize(voice?.name);
+    const lang = String(voice?.lang || '').replace('_', '-').toLowerCase();
+    let score = 0;
+
+    if (lang === 'pt-br') score += 220;
+    else if (lang.startsWith('pt-')) score += 120;
+    else if (/portugu/.test(name)) score += 70;
+    else return -1000;
+
+    if (MALE_VOICE_HINTS.some((hint) => name.includes(normalize(hint)))) score += 160;
+    if (FEMALE_VOICE_HINTS.some((hint) => name.includes(normalize(hint)))) score -= 180;
+    if (NATURAL_VOICE_HINTS.some((hint) => name.includes(hint))) score += 35;
+    if (voice?.localService) score += 8;
+    if (voice?.default) score += 4;
+
+    return score;
+  }
+
   function choosePortugueseVoice() {
     if (!hasSpeechSynthesis) return null;
     const voices = window.speechSynthesis.getVoices();
-    return voices.find((voice) => /^pt-BR$/i.test(voice.lang)) ||
-      voices.find((voice) => /^pt[-_]/i.test(voice.lang)) ||
-      voices.find((voice) => /portugu/i.test(voice.name || '')) ||
-      null;
+    const candidates = voices
+      .map((voice, index) => ({ voice, index, score: voiceScore(voice) }))
+      .filter((item) => item.score > -1000)
+      .sort((a, b) => (b.score - a.score) || (a.index - b.index));
+
+    return candidates[0]?.voice || null;
   }
 
   function updateAudioButton() {
@@ -144,13 +175,13 @@
     const chunk = state.speechQueue.shift();
     const utterance = new SpeechSynthesisUtterance(chunk);
     utterance.lang = 'pt-BR';
-    utterance.rate = 0.98;
-    utterance.pitch = 1;
+    utterance.rate = 0.92;
+    utterance.pitch = 0.9;
     utterance.volume = 1;
     if (voice) utterance.voice = voice;
 
     state.activeUtterance = utterance; // mantém referência viva em navegadores móveis.
-    utterance.onstart = () => setAudioStatus('Nexus falando...');
+    utterance.onstart = () => setAudioStatus(voice ? `Nexus falando — ${voice.name}.` : 'Nexus falando...');
     utterance.onend = () => {
       if (generation !== state.speechGeneration) return;
       state.activeUtterance = null;
@@ -241,7 +272,7 @@
 
   function testAudio() {
     unlockAudio({ announce: false });
-    startSpeech('Teste de áudio. A voz do Nexus está funcionando neste celular.', { replace: true });
+    startSpeech('Teste de áudio. Esta é a nova voz do Nexus, com ritmo mais natural.', { replace: true });
   }
 
   function setButtonListening(button, listening) {
@@ -414,8 +445,8 @@
     const card = document.createElement('div');
     card.className = 'card';
     card.innerHTML = `
-      <div class="t">Nexus Voice + Autonomy v1.1</div>
-      <div class="s">Voz com compatibilidade móvel reforçada e ciclo autônomo real de investigação, somente leitura.</div>
+      <div class="t">Nexus Voice + Autonomy v1.2</div>
+      <div class="s">Voz pt-BR com preferência masculina, ritmo mais natural, compatibilidade móvel reforçada e ciclo autônomo real de investigação, somente leitura.</div>
     `;
 
     const mobileStatus = document.createElement('div');
