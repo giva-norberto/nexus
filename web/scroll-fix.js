@@ -117,3 +117,12 @@ window.addEventListener('DOMContentLoaded', () => {
   setViewportHeight();
   settleAtBottom();
 });
+
+// Carrega a camada opcional de voz e autonomia sem acoplar o Agent Core ao layout.
+(() => {
+  if (document.querySelector('script[data-nexus-voice-autonomy]')) return;
+  const script = document.createElement('script');
+  script.src = './voice-autonomy.js';
+  script.dataset.nexusVoiceAutonomy = 'v1';
+  document.head.appendChild(script);
+})();
