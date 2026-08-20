@@ -118,11 +118,14 @@ window.addEventListener('DOMContentLoaded', () => {
   settleAtBottom();
 });
 
-// Carrega a camada opcional de voz e autonomia sem acoplar o Agent Core ao layout.
-(() => {
-  if (document.querySelector('script[data-nexus-voice-autonomy]')) return;
+function loadOptionalNexusScript(src, dataKey, dataValue) {
+  if (document.querySelector(`script[${dataKey}]`)) return;
   const script = document.createElement('script');
-  script.src = './voice-autonomy.js';
-  script.dataset.nexusVoiceAutonomy = 'v1';
+  script.src = src;
+  script.setAttribute(dataKey, dataValue);
   document.head.appendChild(script);
-})();
+}
+
+// Camadas opcionais desacopladas do layout principal.
+loadOptionalNexusScript('./voice-autonomy.js', 'data-nexus-voice-autonomy', 'v1');
+loadOptionalNexusScript('./source-map-ui.js', 'data-nexus-source-map-ui', 'v1');
