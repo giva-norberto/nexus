@@ -11,6 +11,7 @@ const geminiApiKey = defineSecret('GEMINI_API_KEY');
 const AUTHORIZED_EMAIL = 'giva.norberto@gmail.com';
 const MAX_PROMPT_CHARS = 4000;
 const MAX_DIRECT_SOURCES = 4;
+const MIN_DIRECT_SOURCE_SCORE = 8;
 
 function assertAuthorized(request) {
   const email = String(request.auth?.token?.email || '').toLowerCase();
@@ -102,14 +103,13 @@ function selectSources(map, prompt) {
     .filter((source) => source?.readOnly !== false)
     .filter((source) => TOOL_CATALOG.some((tool) => tool.name === source.tool))
     .map((source) => ({ ...source, matchScore: sourceScore(source, prompt) }))
-    .filter((source) => source.matchScore >= 4)
+    .filter((source) => source.matchScore >= MIN_DIRECT_SOURCE_SCORE)
     .sort((a, b) => b.matchScore - a.matchScore || Number(b.priority || 0) - Number(a.priority || 0));
   if (!ranked.length) return [];
-  const threshold = Math.max(6, ranked[0].matchScore * 0.28);
+
   const selected = [];
   const seenTools = new Set();
   for (const source of ranked) {
-    if (source.matchScore < threshold) continue;
     if (seenTools.has(source.tool)) continue;
     if (source.tool === 'firestore_read' && !hasConcreteArgs(source.args)) continue;
     selected.push(source);
