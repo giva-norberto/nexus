@@ -12,6 +12,12 @@
 .btn{border:1px solid var(--line);background:var(--panel2);color:var(--text);border-radius:9px;padding:9px 12px}.btn:hover{border-color:var(--accent)}.btn.primary{background:var(--accent);color:#08101f;border-color:var(--accent);font-weight:700}.btn.danger{color:var(--err)}.btn:disabled{opacity:.55;cursor:not-allowed}
 #app{min-height:100vh;display:grid;grid-template-columns:1fr 360px}main{min-width:0;display:flex;flex-direction:column;min-height:100vh}header{display:flex;align-items:center;gap:10px;padding:12px 18px;border-bottom:1px solid var(--line);background:var(--panel);position:sticky;top:0;z-index:2}.badge,.pill{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:999px;padding:3px 8px;font-size:11px;color:var(--muted)}.badge.ok,.pill.ok{color:var(--ok);border-color:#225844}.spacer{flex:1}.userTag{font-size:12px;color:var(--muted)}
 #feed{flex:1;overflow:auto;padding:22px;display:flex;flex-direction:column;gap:14px}.msg{max-width:860px;display:flex;gap:10px}.msg.user{align-self:flex-end;flex-direction:row-reverse}.avatar{width:30px;height:30px;border-radius:8px;display:grid;place-items:center;font-size:10px;font-weight:800;flex:0 0 30px;background:linear-gradient(135deg,#4f46e5,#7da2ff)}.msg.user .avatar{background:var(--panel2);color:var(--muted)}.bubble{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:11px 14px;white-space:pre-wrap;overflow-wrap:anywhere}.msg.user .bubble{background:var(--panel2)}
+.bubble code{background:var(--panel2);border:1px solid var(--line);border-radius:4px;padding:1px 5px;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:.92em}
+.bubble pre{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px 12px;overflow:auto;white-space:pre}
+.bubble pre code{background:none;border:none;padding:0}
+.bubble table{border-collapse:collapse;margin:6px 0;width:100%}
+.bubble th,.bubble td{border:1px solid var(--line);padding:5px 8px;text-align:left}
+.bubble ul{margin:4px 0;padding-left:20px}
 #composer{display:flex;gap:10px;padding:14px 18px;border-top:1px solid var(--line);background:var(--panel);position:sticky;bottom:0;align-items:stretch}.composerField{flex:1;display:flex;flex-direction:column;gap:5px}#input{width:100%;flex:1;resize:none;min-height:44px;max-height:150px;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:11px 13px;outline:none}.composerHint{font-size:11px;color:var(--muted);padding-left:4px}
 aside{border-left:1px solid var(--line);background:var(--panel);overflow:auto;max-height:100vh;position:sticky;top:0}.sec{padding:14px 15px;border-bottom:1px solid var(--line)}.sec h2{font-size:10px;text-transform:uppercase;letter-spacing:.15em;color:var(--muted);margin:0 0 10px}.card{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 11px;margin-bottom:8px}.t{font-weight:700}.s{color:var(--muted);font-size:12px;margin-top:3px}.row{display:flex;gap:7px;flex-wrap:wrap;margin-top:8px}.rule{display:flex;justify-content:space-between;gap:10px;font-size:12px;padding:4px 0}.rule strong{color:var(--ok)}.rule strong.block{color:var(--err)}
 .modal{position:fixed;inset:0;background:rgba(0,0,0,.72);display:none;place-items:center;z-index:10;padding:20px}.modal .box{width:min(720px,96vw);max-height:90vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px}.full,input,select{width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:10px}.full{min-height:160px}
@@ -28,7 +34,6 @@ aside{border-left:1px solid var(--line);background:var(--panel);overflow:auto;ma
     <div id="authStatus" class="authStatus"></div>
   </div>
 </div>
-
 <div id="app" class="hidden">
 <main>
 <header>
@@ -56,9 +61,7 @@ aside{border-left:1px solid var(--line);background:var(--panel);overflow:auto;ma
 <div class="sec"><h2>Segurança</h2><div class="card"><div class="t">Firebase Authentication + Firestore Rules</div><div class="s">Acesso restrito à conta Google autorizada.</div></div></div>
 </aside>
 </div>
-
 <div class="modal" id="memoryModal"><div class="box"><h3>Ensinar o Nexus</h3><div class="s">Registre regras de negócio, decisões, preferências técnicas ou fatos confirmados.</div><p><input id="memProject" placeholder="Projeto (ex.: Pronti Pet)"></p><p><select id="memType"><option>regra de negócio</option><option>decisão técnica</option><option>preferência</option><option>fato confirmado</option><option>observação</option></select></p><textarea id="memText" class="full" placeholder="Ex.: Status Finalizado nunca deve voltar para Em Atendimento."></textarea><div class="row"><button id="saveMemoryBtn" class="btn primary" onclick="saveMemory()">Salvar aprendizado</button><button class="btn" onclick="closeMemory()">Cancelar</button></div></div></div>
-
 <script src="./firebase-config.js"></script>
 <script src="./session-context.js"></script>
 <script src="./scroll-fix.js"></script>
@@ -66,7 +69,24 @@ aside{border-left:1px solid var(--line);background:var(--panel);overflow:auto;ma
 const state={projects:[{name:'Pronti Pet',stack:'React / Firebase'},{name:'Pronti',stack:'Firebase / Web'},{name:'ListaLar',stack:'PWA / Firebase'}],memory:[]};
 window.NEXUS_STATE=state;
 function esc(s){return String(s??'').replace(/[&<>\"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[c]||c))}
-function addMsg(role,text){const feed=document.getElementById('feed');const el=document.createElement('div');el.className='msg '+(role==='user'?'user':'assistant');el.innerHTML=`<div class="avatar">${role==='user'?'VC':'NX'}</div><div class="bubble">${esc(text)}</div>`;feed.appendChild(el);feed.scrollTop=feed.scrollHeight;if(typeof window.nexusScrollToBottom==='function')window.nexusScrollToBottom()}
+function formatBubble(raw){
+  const text=String(raw??'');
+  const codeBlocks=[];
+  let s=text.replace(/```([\s\S]*?)```/g,(m,code)=>{
+    codeBlocks.push(esc(code.replace(/^\n/,'').replace(/\n$/,'')));
+    return ` CODEBLOCK${codeBlocks.length-1} `;
+  });
+  s=esc(s);
+  s=s.replace(/`([^`\n]+)`/g,'<code>$1</code>');
+  s=s.replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>');
+  s=s.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g,'$1<em>$2</em>');
+  s=s.replace(/^#{1,6}\s+(.*)$/gm,'<strong>$1</strong>');
+  s=s.replace(/^[-*]\s+(.*)$/gm,'• $1');
+  s=s.replace(/\n/g,'<br>');
+  s=s.replace(/ CODEBLOCK(\d+) /g,(m,i)=>`<pre><code>${codeBlocks[Number(i)]}</code></pre>`);
+  return s;
+}
+function addMsg(role,text){const feed=document.getElementById('feed');const el=document.createElement('div');el.className='msg '+(role==='user'?'user':'assistant');el.innerHTML=`<div class="avatar">${role==='user'?'VC':'NX'}</div><div class="bubble">${role==='user'?esc(text):formatBubble(text)}</div>`;feed.appendChild(el);feed.scrollTop=feed.scrollHeight;if(typeof window.nexusScrollToBottom==='function')window.nexusScrollToBottom()}
 function render(){document.getElementById('projects').innerHTML=state.projects.map(p=>`<div class="card"><div class="t">${esc(p.name)}</div><div class="s">${esc(p.stack)}</div><div class="row"><span class="pill ok">● online</span><span class="pill">conexão do repositório: próxima etapa</span></div></div>`).join('');document.getElementById('memoryCount').textContent=state.memory.length}
 async function sendMsg(e){
   e.preventDefault();
@@ -117,7 +137,6 @@ import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.2.1/firebas
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/12.2.1/firebase-auth.js';
 import { getFirestore, collection, addDoc, getDocs, serverTimestamp } from 'https://www.gstatic.com/firebasejs/12.2.1/firebase-firestore.js';
 import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/12.2.1/firebase-functions.js';
-
 const AUTHORIZED_EMAIL='giva.norberto@gmail.com';
 const appFirebase=initializeApp(window.NEXUS_FIREBASE_CONFIG);
 const auth=getAuth(appFirebase);
@@ -134,15 +153,12 @@ const userEmail=document.getElementById('userEmail');
 const memoryStatus=document.getElementById('memoryStatus');
 const saveMemoryBtn=document.getElementById('saveMemoryBtn');
 let currentUser=null;
-
 window.nexusAsk=async(prompt)=>{
   const result=await askNexus({prompt});
   return result.data||{};
 };
-
 function showGate(message=''){app.classList.add('hidden');gate.classList.remove('hidden');status.textContent=message}
 async function showApp(user){gate.classList.add('hidden');app.classList.remove('hidden');userEmail.textContent=user.email||'';if(!document.getElementById('feed').children.length){window.nexusAddMsg('assistant','Acesso autenticado. Nexus online com Firebase, memória persistente e IA conectados.')}await loadMemory()}
-
 async function loadMemory(){
   memoryStatus.textContent='Carregando memória do Firestore...';
   try{
@@ -162,7 +178,6 @@ async function loadMemory(){
     window.nexusAddMsg('assistant','Não consegui carregar a memória do Firestore: '+(err?.message||'erro desconhecido'));
   }
 }
-
 window.nexusSaveMemory=async()=>{
   const project=document.getElementById('memProject').value.trim();
   const type=document.getElementById('memType').value;
@@ -188,10 +203,8 @@ window.nexusSaveMemory=async()=>{
     saveMemoryBtn.textContent='Salvar aprendizado';
   }
 };
-
 loginBtn.addEventListener('click',async()=>{status.textContent='Abrindo login Google...';try{await signInWithPopup(auth,provider)}catch(err){status.textContent='Falha no login: '+(err?.message||'erro desconhecido')}});
 logoutBtn.addEventListener('click',async()=>{await signOut(auth);showGate('Sessão encerrada.')});
-
 onAuthStateChanged(auth,async user=>{
   if(!user){currentUser=null;showGate();return}
   const email=(user.email||'').toLowerCase();
