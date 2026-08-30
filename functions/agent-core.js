@@ -213,6 +213,10 @@ function parseIntent(prompt) {
   const metrics=new Set();
   const limit=extractLimit(prompt);
 
+  const userCountRequested=/\bquant(?:os|as)\s+(?:usuarios|pessoas|contas)\b|\bnumero de usuarios\b|\btotal de usuarios\b/.test(text);
+  const purchaseCountRequested=/\bquant(?:os|as)\s+compras\b|\bnumero de compras\b|\bcompras analisadas\b/.test(text);
+  const itemCountRequested=/\bquant(?:os|as)\s+(?:itens|produtos)\b|\bnumero de itens\b|\bitens analisados\b/.test(text);
+
   if (/\busuari|\bpessoa|\bconta|\blogin|\bacess|\bentrou\b|\binativ/.test(text)) entities.add('users');
   if (/\bproduto|\bitem|\bcoisa|\bmercadoria/.test(text)) entities.add('products');
   if (/\bcompra|\bgasto|\bgastei|\bdinheiro|\bvalor|\bpreco|\bcusto|\bmercado|\bestabelecimento/.test(text)) entities.add('spending');
@@ -223,8 +227,8 @@ function parseIntent(prompt) {
   if (/\bquanto\b.*\bgast|\btotal gasto\b|\btotal\b.*\bgast|\bsoma\b/.test(text)) {
     operations.add('sum'); metrics.add('totalSpent'); entities.add('spending');
   }
-  if (/\bquantos\b|\bquantas\b|\bnumero de\b|\bcontagem\b/.test(text)) operations.add('count');
-  if (/\bultimo acesso\b|\bquem entrou por ultimo\b|\bmais recente\b/.test(text)) operations.add('latest');
+  if (userCountRequested||purchaseCountRequested||itemCountRequested) operations.add('count');
+  if (/\bultimo acesso\b|\bultimo login\b|\bacesso mais recente\b|\blogin mais recente\b|\bquem (?:entrou|acessou) por ultimo\b|\bmais recente\b/.test(text)) operations.add('latest');
   if (/\bmais tempo sem acess|\blogin mais antigo\b|\bmais antigo\b/.test(text)) operations.add('oldest');
   if (/\btop\b|\bmais gastei\b|\bmais gasto\b|\bmais pesaram\b|\bmaior aumento\b|\bmenor preco\b/.test(text)) operations.add('ranking');
   if ((entities.has('spending')||entities.has('products')) && (limit || (/\bmais\b/.test(text) && /\bonde\b|\bquais\b|\bqual\b|\bproduto|\bitem|\bcompra|\bgast|\bdinheiro/.test(text)))) operations.add('ranking');
@@ -232,11 +236,12 @@ function parseIntent(prompt) {
   if (entities.has('code')) operations.add('investigate');
 
   if (entities.has('users')) {
-    if (operations.has('count')) metrics.add('userCount');
+    if (userCountRequested) metrics.add('userCount');
     if (operations.has('latest')||operations.has('oldest')) metrics.add('lastSignInTime');
   }
   if (entities.has('spending')||entities.has('products')) {
-    if (operations.has('count')) metrics.add(/\bitem/.test(text)?'itemCount':'purchaseCount');
+    if (purchaseCountRequested) metrics.add('purchaseCount');
+    if (itemCountRequested) metrics.add('itemCount');
     if (operations.has('ranking')) {
       if (/aumento/.test(text)) metrics.add('priceChangePct');
       else if (/menor preco/.test(text)) metrics.add('minUnitPrice');
@@ -352,7 +357,7 @@ function authAnswer(intent,result) {
   const users=Array.isArray(result?.users)?result.users:[];
   const valid=users.filter((u)=>u.lastSignInTime&&Number.isFinite(Date.parse(u.lastSignInTime)));
   const lines=[];
-  if (intent.operations.includes('count')||intent.metrics.includes('userCount')) lines.push(`Total de usuários: ${result?.returned??users.length}.`);
+  if (intent.metrics.includes('userCount')) lines.push(`Total de usuários: ${result?.returned??users.length}.`);
   if (intent.operations.includes('latest')&&valid[0]) lines.push(`Acesso mais recente: ${valid[0].displayName||valid[0].email} — ${date(valid[0].lastSignInTime)}.`);
   if (intent.operations.includes('oldest')&&valid.length) {
     const u=valid[valid.length-1];
