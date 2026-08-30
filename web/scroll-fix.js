@@ -1,4 +1,80 @@
-// Rolagem automática e layout responsivo do chat Nexus.
+// Rolagem automática, layout responsivo e formatação segura do chat Nexus.
+function nexusEscapeHtml(value) {
+  return String(value ?? '').replace(/[&<>\"]/g, (char) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '\"': '&quot;'
+  }[char] || char));
+}
+
+function formatBubble(raw) {
+  const lines = nexusEscapeHtml(raw).split('\n');
+  const html = [];
+  let listType = null;
+
+  const closeList = () => {
+    if (!listType) return;
+    html.push(listType === 'ol' ? '</ol>' : '</ul>');
+    listType = null;
+  };
+
+  const inline = (value) => String(value)
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/(^|[^*])\*(?!\*)([^*]+)\*(?!\*)/g, '$1<em>$2</em>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>');
+
+  for (const line of lines) {
+    const heading = line.match(/^(#{1,4})\s+(.*)$/);
+    const ordered = line.match(/^\s*\d+[.)]\s+(.*)$/);
+    const bullet = line.match(/^\s*[-*]\s+(.*)$/);
+
+    if (heading) {
+      closeList();
+      html.push(`<strong class="bubble-h">${inline(heading[2])}</strong>`);
+      continue;
+    }
+
+    if (ordered) {
+      if (listType !== 'ol') {
+        closeList();
+        html.push('<ol>');
+        listType = 'ol';
+      }
+      html.push(`<li>${inline(ordered[1])}</li>`);
+      continue;
+    }
+
+    if (bullet) {
+      if (listType !== 'ul') {
+        closeList();
+        html.push('<ul>');
+        listType = 'ul';
+      }
+      html.push(`<li>${inline(bullet[1])}</li>`);
+      continue;
+    }
+
+    closeList();
+    if (line.trim() === '') html.push('<br>');
+    else html.push(`<div>${inline(line)}</div>`);
+  }
+
+  closeList();
+  return html.join('');
+}
+
+window.formatBubble = formatBubble;
+
+function formatAssistantBubbles(root = document) {
+  const scope = root?.querySelectorAll ? root : document;
+  scope.querySelectorAll('.msg.assistant .bubble:not([data-markdown-formatted])').forEach((bubble) => {
+    const text = bubble.textContent || '';
+    bubble.setAttribute('data-markdown-formatted', '1');
+    bubble.innerHTML = formatBubble(text);
+  });
+}
+
 window.addEventListener('DOMContentLoaded', () => {
   const feed = document.getElementById('feed');
   const main = document.querySelector('main');
@@ -18,6 +94,12 @@ window.addEventListener('DOMContentLoaded', () => {
     #feed{flex:1 1 0!important;min-height:0!important;overflow-y:auto!important;overflow-x:hidden!important;overscroll-behavior:contain;scroll-behavior:auto!important;-webkit-overflow-scrolling:touch}
     #composer{flex:0 0 auto!important;position:relative!important;bottom:auto!important;z-index:3}
     #input{font-size:16px}
+    .msg.assistant .bubble{white-space:normal!important}
+    .msg.assistant .bubble>div{white-space:pre-wrap}
+    .msg.assistant .bubble .bubble-h{display:block;margin:.35em 0 .15em;font-size:1.03em}
+    .msg.assistant .bubble ul,.msg.assistant .bubble ol{margin:.35em 0 .35em 1.4em;padding:0}
+    .msg.assistant .bubble li{margin:.15em 0}
+    .msg.assistant .bubble code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;background:rgba(255,255,255,.06);border:1px solid var(--line);border-radius:5px;padding:1px 4px}
     @media(max-width:760px){
       #app,main{height:var(--nexus-vh)!important}
       header{min-height:52px!important;padding:8px 9px!important;overflow-x:auto!important;scrollbar-width:none}
@@ -70,7 +152,9 @@ window.addEventListener('DOMContentLoaded', () => {
     const relevant = mutations.some((mutation) =>
       mutation.type === 'characterData' || mutation.addedNodes.length > 0
     );
-    if (relevant) settleAtBottom();
+    if (!relevant) return;
+    formatAssistantBubbles(feed);
+    settleAtBottom();
   });
   observer.observe(feed, { childList: true, subtree: true, characterData: true });
 
@@ -115,6 +199,7 @@ window.addEventListener('DOMContentLoaded', () => {
   });
 
   setViewportHeight();
+  formatAssistantBubbles(feed);
   settleAtBottom();
 });
 
