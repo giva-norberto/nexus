@@ -93,6 +93,39 @@ function dateMs(value) {
   return Number.isFinite(parsed) ? parsed : NaN;
 }
 
+function resolvePeriod(data = {}) {
+  const startMs = Number(data.startMs);
+  const endMs = Number(data.endMs);
+  if (Number.isFinite(startMs) || Number.isFinite(endMs)) {
+    return {
+      mode: 'range',
+      startMs: Number.isFinite(startMs) ? startMs : null,
+      endMs: Number.isFinite(endMs) ? endMs : null,
+      days: null
+    };
+  }
+
+  const days = Number(data.days || 0);
+  if (Number.isFinite(days) && days > 0) {
+    return {
+      mode: 'days',
+      startMs: Date.now() - days * 86400000,
+      endMs: Date.now(),
+      days
+    };
+  }
+
+  return { mode: 'all', startMs: null, endMs: null, days: null };
+}
+
+function dateWithinPeriod(timestamp, period) {
+  if (period.mode === 'all') return true;
+  if (!Number.isFinite(timestamp)) return false;
+  if (Number.isFinite(period.startMs) && timestamp < period.startMs) return false;
+  if (Number.isFinite(period.endMs) && timestamp > period.endMs) return false;
+  return true;
+}
+
 exports.firebaseFirestoreRead = onCall(
   { region: 'southamerica-east1', maxInstances: 1, timeoutSeconds: 45, memory: '256MiB' },
   async (request) => {
@@ -104,7 +137,16 @@ exports.firebaseFirestoreRead = onCall(
     if (parts.length % 2 === 0) {
       const ref = db.doc(path);
       const snap = await ref.get();
-      if (!snap.exists) return { project: project.name, projectId: project.projectId, readOnly: true, kind: 'document', path, exists: false };
+      if (!snap.exists) {
+        return {
+          project: project.name,
+          projectId: project.projectId,
+          readOnly: true,
+          kind: 'document',
+          path,
+          exists: false
+        };
+      }
       const subcollections = await ref.listCollections();
       return {
         project: project.name,
@@ -139,8 +181,7 @@ exports.firebaseSpendingAnalytics = onCall(
   async (request) => {
     assertAuthorized(request);
     const project = getProject(request.data?.project || 'listalar');
-    const days = Number(request.data?.days || 0);
-    const cutoff = Number.isFinite(days) && days > 0 ? Date.now() - days * 86400000 : null;
+    const period = resolvePeriod(request.data || {});
     const db = getFirestore(getProjectApp(project));
 
     const familiesSnap = await db.collection('familias').limit(MAX_FAMILIES).get();
@@ -154,26 +195,42 @@ exports.firebaseSpendingAnalytics = onCall(
     let highestLine = null;
 
     for (const familyDoc of familiesSnap.docs) {
-      if (purchaseCount >= MAX_PURCHASES) { truncatedPurchases = true; break; }
+      if (purchaseCount >= MAX_PURCHASES) {
+        truncatedPurchases = true;
+        break;
+      }
+
       const remainingPurchases = MAX_PURCHASES - purchaseCount;
       const gastosSnap = await familyDoc.ref.collection('gastos').limit(remainingPurchases).get();
 
       for (const gastoDoc of gastosSnap.docs) {
-        if (purchaseCount >= MAX_PURCHASES) { truncatedPurchases = true; break; }
+        if (purchaseCount >= MAX_PURCHASES) {
+          truncatedPurchases = true;
+          break;
+        }
+
         const gasto = gastoDoc.data() || {};
         const purchaseDate = dateMs(gasto.dataCompraMs || gasto.dataCompra || gasto.criadoEm);
-        if (cutoff && Number.isFinite(purchaseDate) && purchaseDate < cutoff) continue;
+        if (!dateWithinPeriod(purchaseDate, period)) continue;
 
         purchaseCount += 1;
         totalSpent += toNumber(gasto.valorTotal, 0);
-        if (itemCount >= MAX_ITEMS) { truncatedItems = true; continue; }
+
+        if (itemCount >= MAX_ITEMS) {
+          truncatedItems = true;
+          continue;
+        }
 
         const remainingItems = MAX_ITEMS - itemCount;
         const itemSnap = await gastoDoc.ref.collection('itens').limit(remainingItems).get();
         if (itemSnap.size >= remainingItems) truncatedItems = true;
 
         for (const itemDoc of itemSnap.docs) {
-          if (itemCount >= MAX_ITEMS) { truncatedItems = true; break; }
+          if (itemCount >= MAX_ITEMS) {
+            truncatedItems = true;
+            break;
+          }
+
           itemCount += 1;
           const item = itemDoc.data() || {};
           const name = String(item.descricao || item.descricaoOriginal || 'Item sem descrição').trim();
@@ -187,16 +244,27 @@ exports.firebaseSpendingAnalytics = onCall(
           const purchaseIso = Number.isFinite(purchaseDate) ? new Date(purchaseDate).toISOString() : null;
 
           const current = items.get(key) || {
-            key, name, productId, gtin, totalSpent: 0, quantity: 0, occurrences: 0,
-            maxUnitPrice: 0, minUnitPrice: null, history: []
+            key,
+            name,
+            productId,
+            gtin,
+            totalSpent: 0,
+            quantity: 0,
+            occurrences: 0,
+            maxUnitPrice: 0,
+            minUnitPrice: null,
+            history: []
           };
+
           current.totalSpent += lineTotal;
           current.quantity += quantity;
           current.occurrences += 1;
+
           if (unitPrice > 0) {
             current.maxUnitPrice = Math.max(current.maxUnitPrice, unitPrice);
             current.minUnitPrice = current.minUnitPrice === null ? unitPrice : Math.min(current.minUnitPrice, unitPrice);
           }
+
           if (current.history.length < MAX_HISTORY_PER_ITEM) {
             current.history.push({
               date: purchaseIso,
@@ -207,6 +275,7 @@ exports.firebaseSpendingAnalytics = onCall(
               establishment
             });
           }
+
           if (name.length > current.name.length) current.name = name;
           items.set(key, current);
 
@@ -221,6 +290,7 @@ exports.firebaseSpendingAnalytics = onCall(
             gastoId: gastoDoc.id,
             itemId: itemDoc.id
           };
+
           if (!highestUnit || unitPrice > highestUnit.unitPrice) highestUnit = context;
           if (!highestLine || lineTotal > highestLine.lineTotal) highestLine = context;
         }
@@ -234,6 +304,7 @@ exports.firebaseSpendingAnalytics = onCall(
         if (b.dateMs === null) return -1;
         return a.dateMs - b.dateMs;
       });
+
       const datedPositive = history.filter((entry) => entry.dateMs !== null && entry.unitPrice > 0);
       const first = datedPositive[0] || null;
       const last = datedPositive[datedPositive.length - 1] || null;
@@ -243,6 +314,7 @@ exports.firebaseSpendingAnalytics = onCall(
       const priceChangePct = first && last && firstUnitPrice > 0 ? roundPct((priceChange / firstUnitPrice) * 100) : 0;
       const distinctPrices = new Set(datedPositive.map((entry) => entry.unitPrice.toFixed(2))).size;
       const comparable = datedPositive.length >= 2;
+
       let trend = 'insufficient-data';
       if (comparable) trend = priceChange > 0 ? 'up' : priceChange < 0 ? 'down' : 'stable';
 
@@ -270,15 +342,29 @@ exports.firebaseSpendingAnalytics = onCall(
     const topBySpend = [...aggregates].sort((a, b) => b.totalSpent - a.totalSpent).slice(0, 15);
     const topByUnitPrice = [...aggregates].sort((a, b) => b.maxUnitPrice - a.maxUnitPrice).slice(0, 15);
     const topByOccurrences = [...aggregates].sort((a, b) => b.occurrences - a.occurrences).slice(0, 15);
-    const topPriceIncreases = comparable.filter((item) => item.priceChange > 0).sort((a, b) => b.priceChangePct - a.priceChangePct).slice(0, 15);
-    const topPriceDecreases = comparable.filter((item) => item.priceChange < 0).sort((a, b) => a.priceChangePct - b.priceChangePct).slice(0, 15);
-    const changedPriceItems = comparable.filter((item) => item.priceChanged).sort((a, b) => Math.abs(b.priceChangePct) - Math.abs(a.priceChangePct)).slice(0, 30);
+    const topPriceIncreases = comparable
+      .filter((item) => item.priceChange > 0)
+      .sort((a, b) => b.priceChangePct - a.priceChangePct)
+      .slice(0, 15);
+    const topPriceDecreases = comparable
+      .filter((item) => item.priceChange < 0)
+      .sort((a, b) => a.priceChangePct - b.priceChangePct)
+      .slice(0, 15);
+    const changedPriceItems = comparable
+      .filter((item) => item.priceChanged)
+      .sort((a, b) => Math.abs(b.priceChangePct) - Math.abs(a.priceChangePct))
+      .slice(0, 30);
 
     return {
       project: project.name,
       projectId: project.projectId,
       readOnly: true,
-      periodDays: cutoff ? days : null,
+      periodMode: period.mode,
+      periodStartMs: period.startMs,
+      periodEndMs: period.endMs,
+      periodStart: Number.isFinite(period.startMs) ? new Date(period.startMs).toISOString() : null,
+      periodEnd: Number.isFinite(period.endMs) ? new Date(period.endMs).toISOString() : null,
+      periodDays: period.days,
       familyCountScanned: familiesSnap.size,
       purchaseCount,
       itemCount,
@@ -294,7 +380,12 @@ exports.firebaseSpendingAnalytics = onCall(
       highestUnit,
       highestLine,
       truncated: truncatedPurchases || truncatedItems || familiesSnap.size >= MAX_FAMILIES,
-      limits: { families: MAX_FAMILIES, purchases: MAX_PURCHASES, items: MAX_ITEMS, historyPerItem: MAX_HISTORY_PER_ITEM }
+      limits: {
+        families: MAX_FAMILIES,
+        purchases: MAX_PURCHASES,
+        items: MAX_ITEMS,
+        historyPerItem: MAX_HISTORY_PER_ITEM
+      }
     };
   }
 );

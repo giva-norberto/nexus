@@ -12,6 +12,8 @@ const FIREBASE_PROJECTS = {
   listalar: { key: 'listalar', name: 'ListaLar', projectId: 'compras-da-casa' }
 };
 
+// Compatibilidade dos projetos já conectados. Novos repositórios podem vir do source_map
+// pelo argumento repository, limitado ao proprietário autorizado.
 const REPOSITORIES = {
   'pronti-pet': { name: 'Pronti Pet', fullName: 'giva-norberto/pronti-pet' },
   'pronti-app': { name: 'Pronti', fullName: 'giva-norberto/pronti-app' },
@@ -53,7 +55,19 @@ function resolveFirebaseProject(value) {
   return null;
 }
 
-function resolveRepo(value) {
+function sourceMapRepository(value) {
+  const repository = String(value || '').trim();
+  if (!/^giva-norberto\/[A-Za-z0-9_.-]+$/i.test(repository)) return null;
+  return {
+    name: repository.split('/')[1],
+    fullName: repository
+  };
+}
+
+function resolveRepo(value, repository) {
+  const mapped = sourceMapRepository(repository);
+  if (mapped) return mapped;
+
   const text = normalize(value);
   if (/pronti[- ]?pet/.test(text)) return REPOSITORIES['pronti-pet'];
   if (/pronti[- ]?(app)?/.test(text) && !/pet/.test(text)) return REPOSITORIES['pronti-app'];
@@ -63,7 +77,7 @@ function resolveRepo(value) {
 }
 
 function getProjectApp(project) {
-  const name = `nexus-agent-v20-${project.key}`;
+  const name = `nexus-agent-${project.key}`;
   const existing = getApps().find((app) => app.name === name);
   if (existing) return existing;
   try {
@@ -95,6 +109,7 @@ async function firebaseProjectStatus(args = {}) {
     let recentSignIns30d = 0;
     let pageToken;
     const cutoff = Date.now() - 30 * 86400000;
+
     do {
       const remaining = MAX_AUTH_USERS - totalUsers;
       if (remaining <= 0) break;
@@ -107,6 +122,7 @@ async function firebaseProjectStatus(args = {}) {
       }
       pageToken = page.pageToken;
     } while (pageToken && totalUsers < MAX_AUTH_USERS);
+
     result.authentication = {
       totalUsers,
       enabledUsers: totalUsers - disabledUsers,
@@ -136,6 +152,7 @@ async function firebaseProjectStatus(args = {}) {
 async function firebaseAuthUsers(args = {}) {
   const project = resolveFirebaseProject(args.project);
   if (!project) return { tool: 'firebase_auth_users', ok: false, error: 'Projeto Firebase não autorizado.' };
+
   const requestedLimit = Math.max(1, Math.min(MAX_AUTH_USERS, Number(args.limit || 100)));
   const app = getProjectApp(project);
   const auth = getAuth(app);
@@ -146,6 +163,7 @@ async function firebaseAuthUsers(args = {}) {
     const remaining = requestedLimit - users.length;
     if (remaining <= 0) break;
     const page = await auth.listUsers(Math.min(1000, remaining), pageToken);
+
     for (const user of page.users) {
       users.push({
         uid: user.uid,
@@ -159,6 +177,7 @@ async function firebaseAuthUsers(args = {}) {
       });
       if (users.length >= requestedLimit) break;
     }
+
     pageToken = page.pageToken;
   } while (pageToken && users.length < requestedLimit);
 
@@ -184,8 +203,10 @@ async function firebaseAuthUsers(args = {}) {
 async function firestoreRead(args = {}, request) {
   const project = resolveFirebaseProject(args.project);
   if (!project) return { tool: 'firestore_read', ok: false, error: 'Projeto Firebase não autorizado.' };
+
   const path = String(args.path || '').trim();
   if (!path) return { tool: 'firestore_read', ok: false, error: 'Caminho Firestore não informado.' };
+
   try {
     const result = await firestoreExplorer.firebaseFirestoreRead.run({
       ...request,
@@ -209,19 +230,24 @@ function compactAnalytics(value) {
     project: value.project,
     projectId: value.projectId,
     readOnly: true,
-    periodDays: value.periodDays,
+    periodMode: value.periodMode || null,
+    periodStartMs: value.periodStartMs ?? null,
+    periodEndMs: value.periodEndMs ?? null,
+    periodStart: value.periodStart || null,
+    periodEnd: value.periodEnd || null,
+    periodDays: value.periodDays ?? null,
     familyCountScanned: value.familyCountScanned,
     purchaseCount: value.purchaseCount,
     itemCount: value.itemCount,
     totalSpent: value.totalSpent,
     uniqueItems: value.uniqueItems,
     priceComparableItems: value.priceComparableItems,
-    topBySpend: (value.topBySpend || []).slice(0, 12),
-    topByUnitPrice: (value.topByUnitPrice || []).slice(0, 10),
-    topByOccurrences: (value.topByOccurrences || []).slice(0, 12),
-    topPriceIncreases: (value.topPriceIncreases || []).slice(0, 12),
-    topPriceDecreases: (value.topPriceDecreases || []).slice(0, 12),
-    changedPriceItems: (value.changedPriceItems || []).slice(0, 20),
+    topBySpend: (value.topBySpend || []).slice(0, 15),
+    topByUnitPrice: (value.topByUnitPrice || []).slice(0, 15),
+    topByOccurrences: (value.topByOccurrences || []).slice(0, 15),
+    topPriceIncreases: (value.topPriceIncreases || []).slice(0, 15),
+    topPriceDecreases: (value.topPriceDecreases || []).slice(0, 15),
+    changedPriceItems: (value.changedPriceItems || []).slice(0, 30),
     highestUnit: value.highestUnit || null,
     highestLine: value.highestLine || null,
     truncated: Boolean(value.truncated),
@@ -231,12 +257,16 @@ function compactAnalytics(value) {
 
 async function listaLarSpendingAnalytics(args = {}, request) {
   try {
+    const startMs = Number(args.startMs);
+    const endMs = Number(args.endMs);
     const result = await firestoreExplorer.firebaseSpendingAnalytics.run({
       ...request,
       data: {
         ...(request?.data || {}),
         project: 'listalar',
-        days: Math.max(0, Math.min(3650, Number(args.days || 0)))
+        days: Math.max(0, Math.min(3650, Number(args.days || 0))),
+        ...(Number.isFinite(startMs) ? { startMs } : {}),
+        ...(Number.isFinite(endMs) ? { endMs } : {})
       }
     });
     return compactAnalytics(result);
@@ -251,7 +281,7 @@ async function githubFetch(path, token) {
       Authorization: `Bearer ${token}`,
       Accept: 'application/vnd.github+json',
       'X-GitHub-Api-Version': '2022-11-28',
-      'User-Agent': 'Nexus-Agent-v20'
+      'User-Agent': 'Nexus-Agent'
     }
   });
   if (!response.ok) throw new Error(`GitHub HTTP ${response.status}`);
@@ -266,18 +296,21 @@ function scorePath(path, terms) {
   const normalizedPath = normalize(path);
   const name = normalizedPath.split('/').pop() || '';
   let score = 0;
+
   for (const term of terms) {
     if (name === term) score += 12;
     else if (name.includes(term)) score += 7;
     else if (normalizedPath.includes(term)) score += 3;
   }
+
   if (/firebase|firestore|auth|function|service|api|config|workflow|rules|package|index|bootstrap/.test(name)) score += 2;
   return score;
 }
 
 async function githubInvestigate(args = {}, _request, runtime = {}) {
-  const repo = resolveRepo(args.project || args.repository || runtime.prompt);
+  const repo = resolveRepo(args.project || args.repository || runtime.prompt, args.repository);
   if (!repo) return { tool: 'github_investigate', ok: false, error: 'Projeto GitHub não identificado.' };
+
   const query = String(args.query || runtime.prompt || '').trim();
   const token = runtime.githubToken;
   if (!token) return { tool: 'github_investigate', ok: false, error: 'Token GitHub indisponível.' };
@@ -294,7 +327,8 @@ async function githubInvestigate(args = {}, _request, runtime = {}) {
     .filter((item) => item.type === 'blob' && Number(item.size || 0) <= MAX_GITHUB_FILE_BYTES)
     .map((item) => ({
       ...item,
-      score: scorePath(item.path, terms) + (refs.some((ref) => normalize(item.path).endsWith(normalize(ref))) ? 100 : 0)
+      score: scorePath(item.path, terms) +
+        (refs.some((ref) => normalize(item.path).endsWith(normalize(ref))) ? 100 : 0)
     }))
     .filter((item) => item.score > 0)
     .sort((a, b) => b.score - a.score || Number(a.size || 0) - Number(b.size || 0))
@@ -309,25 +343,39 @@ async function githubInvestigate(args = {}, _request, runtime = {}) {
   const files = [];
   for (const candidate of candidates) {
     try {
-      const payload = await githubFetch(`/repos/${repo.fullName}/contents/${encodePath(candidate.path)}?ref=${encodeURIComponent(branch)}`, token);
+      const payload = await githubFetch(
+        `/repos/${repo.fullName}/contents/${encodePath(candidate.path)}?ref=${encodeURIComponent(branch)}`,
+        token
+      );
       if (payload?.encoding !== 'base64' || !payload?.content) continue;
+
       const decoded = Buffer.from(String(payload.content).replace(/\n/g, ''), 'base64').toString('utf8');
       const lines = decoded.split('\n');
       const hits = [];
+
       for (let i = 0; i < lines.length; i += 1) {
         if (terms.some((term) => term.length >= 4 && normalize(lines[i]).includes(term))) hits.push(i);
       }
+
       const centers = hits.length ? hits.slice(0, 4) : [0];
       const selected = new Set();
       for (const center of centers) {
-        for (let i = Math.max(0, center - 7); i <= Math.min(lines.length - 1, center + 12); i += 1) selected.add(i);
+        for (let i = Math.max(0, center - 7); i <= Math.min(lines.length - 1, center + 12); i += 1) {
+          selected.add(i);
+        }
       }
+
       const snippet = [...selected]
         .sort((a, b) => a - b)
         .slice(0, 140)
         .map((lineNo) => `${lineNo + 1}: ${lines[lineNo]}`)
         .join('\n');
-      files.push({ path: candidate.path, sha: payload.sha || candidate.sha || '', snippet: clamp(snippet, 6000) });
+
+      files.push({
+        path: candidate.path,
+        sha: payload.sha || candidate.sha || '',
+        snippet: clamp(snippet, 6000)
+      });
     } catch (error) {
       files.push({ path: candidate.path, error: clamp(error?.message || error, 250) });
     }
@@ -358,6 +406,7 @@ async function memorySearch(args = {}, _request, runtime = {}) {
     const query = String(args.query || runtime.prompt || '');
     const terms = words(query);
     const project = normalize(args.project || '');
+
     const matches = snapshot.docs
       .map((doc) => {
         const data = doc.data() || {};
@@ -375,6 +424,7 @@ async function memorySearch(args = {}, _request, runtime = {}) {
       .filter((item) => item.score > 0)
       .sort((a, b) => b.score - a.score)
       .slice(0, 12);
+
     return { tool: 'memory_search', ok: true, readOnly: true, matches };
   } catch (error) {
     return { tool: 'memory_search', ok: false, error: clamp(error?.message || error, 500) };
@@ -389,23 +439,23 @@ const TOOL_CATALOG = [
   },
   {
     name: 'firebase_auth_users',
-    description: 'Lista usuários reais do Firebase Authentication do ListaLar com email, nome, status, criação e lastSignInTime; útil para último acesso, usuários inativos, quem acessou por último e contagens.',
+    description: 'Lista usuários reais do Firebase Authentication do ListaLar com email, nome, status, criação e lastSignInTime.',
     args: { project: 'listalar', limit: '1..1000' }
   },
   {
     name: 'firestore_read',
-    description: 'Lê documento ou coleção específica do Firestore do ListaLar em modo somente leitura. Esquema útil: usuarios/{uid}; familias/{familiaId}; familias/{familiaId}/gastos/{gastoId}; familias/{familiaId}/gastos/{gastoId}/itens/{itemId}.',
+    description: 'Lê documento ou coleção específica do Firestore do ListaLar em modo somente leitura.',
     args: { project: 'listalar', path: 'caminho Firestore', limit: '1..100' }
   },
   {
     name: 'listalar_spending_analytics',
-    description: 'Calcula analytics determinísticos de compras do ListaLar: gastos, itens, frequência, preços, aumentos, quedas e histórico observado.',
-    args: { days: '0 para todo histórico ou número de dias' }
+    description: 'Calcula analytics determinísticos de compras do ListaLar com suporte a período por startMs/endMs ou últimos N dias.',
+    args: { days: 'opcional', startMs: 'opcional', endMs: 'opcional' }
   },
   {
     name: 'github_investigate',
-    description: 'Investiga código e arquitetura no GitHub dos projetos Nexus, ListaLar, Pronti e Pronti Pet. Lê árvore e trechos de arquivos relevantes; somente leitura.',
-    args: { project: 'nexus|listalar|pronti-app|pronti-pet', query: 'o que investigar' }
+    description: 'Investiga código e arquitetura em repositório GitHub autorizado. Pode receber repository do source_map.',
+    args: { project: 'opcional', repository: 'giva-norberto/repositorio', query: 'o que investigar' }
   },
   {
     name: 'memory_search',

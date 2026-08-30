@@ -1,387 +1,449 @@
 const { onCall, HttpsError } = require('firebase-functions/v2/https');
 const { defineSecret } = require('firebase-functions/params');
-const { applicationDefault, getApp, getApps, initializeApp } = require('firebase-admin/app');
 const { getFirestore } = require('firebase-admin/firestore');
+const { TOOL_CATALOG, executeTool } = require('./agent-tools-v20');
 
 const groqApiKey = defineSecret('GROQ_API_KEY');
 const githubToken = defineSecret('NEXUS_GITHUB_TOKEN');
+const geminiApiKey = defineSecret('GEMINI_API_KEY');
 
 const AUTHORIZED_EMAIL = 'giva.norberto@gmail.com';
-const MODEL_ID = 'openai/gpt-oss-120b';
+const GROQ_MODEL = 'openai/gpt-oss-120b';
+const GEMINI_MODEL = 'gemini-2.5-flash';
 const MAX_PROMPT_CHARS = 4000;
-const MAX_HISTORY_MESSAGES = 10;
-const MAX_TOOL_CALLS = 3;
-const MAX_GITHUB_FILES = 5;
-const MAX_GITHUB_FILE_BYTES = 180000;
-const MAX_EVIDENCE_CHARS = 36000;
-const MAX_FAMILIES = 100;
-const MAX_PURCHASES = 1000;
-const MAX_ITEMS = 10000;
+const MAX_TOOLS = 4;
+const TZ = 'America/Sao_Paulo';
 
-const REPOSITORIES = {
-  'pronti-pet': { name: 'Pronti Pet', fullName: 'giva-norberto/pronti-pet' },
-  'pronti-app': { name: 'Pronti', fullName: 'giva-norberto/pronti-app' },
-  listalar: { name: 'ListaLar', fullName: 'giva-norberto/ListaLar' },
-  nexus: { name: 'Nexus', fullName: 'giva-norberto/nexus' }
+const MONTHS = {
+  janeiro:1, fevereiro:2, marco:3, abril:4, maio:5, junho:6,
+  julho:7, agosto:8, setembro:9, outubro:10, novembro:11, dezembro:12
 };
+const NUMBERS = {um:1,uma:1,dois:2,duas:2,tres:3,quatro:4,cinco:5,seis:6,sete:7,oito:8,nove:9,dez:10};
 
-const PROJECT_ALIASES = {
-  'pronti pet': 'pronti-pet',
-  'pronti-pet': 'pronti-pet',
-  pronti: 'pronti-app',
-  'pronti app': 'pronti-app',
-  'pronti-app': 'pronti-app',
-  listalar: 'listalar',
-  'lista lar': 'listalar',
-  nexus: 'nexus'
-};
+function normalize(value) {
+  return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+}
 
 function assertAuthorized(request) {
   const email = String(request.auth?.token?.email || '').toLowerCase();
-  if (!request.auth || email !== AUTHORIZED_EMAIL) {
-    throw new HttpsError('permission-denied', 'Usuário não autorizado.');
-  }
+  if (!request.auth || email !== AUTHORIZED_EMAIL) throw new HttpsError('permission-denied', 'Usuário não autorizado.');
 }
 
-function normalize(value) {
-  return String(value || '')
-    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase().replace(/\s+/g, ' ').trim();
+function providerFailure(error) {
+  const text = `${error?.code || ''} ${error?.message || ''}`.toLowerCase();
+  return /resource-exhausted|unavailable|internal|429|cota|limite|capacity/.test(text);
 }
 
-function words(value) {
-  const stop = new Set(['que','para','com','uma','uns','das','dos','por','mais','qual','quais','como','onde','isso','esse','essa','este','esta','nexus','projeto','sobre','meu','minha','nos','nas']);
-  return [...new Set(normalize(value).replace(/[^a-z0-9_-]+/g, ' ').split(/\s+/).filter((w) => w.length >= 3 && !stop.has(w)))].slice(0, 24);
-}
-
-function clampText(value, max) {
-  const text = String(value || '');
-  return text.length > max ? `${text.slice(0, max)}\n...[conteúdo limitado]` : text;
-}
-
-function safeHistory(value) {
-  if (!Array.isArray(value)) return [];
-  return value.slice(-MAX_HISTORY_MESSAGES).map((item) => ({
-    role: item?.role === 'assistant' ? 'assistant' : 'user',
-    content: clampText(item?.content || '', 1600)
-  })).filter((item) => item.content.trim());
-}
-
-async function callGroq(messages, options = {}) {
+async function groq(system, prompt, maxTokens = 1200) {
   const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${groqApiKey.value()}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: MODEL_ID,
-      messages,
-      temperature: options.temperature ?? 0.1,
-      max_completion_tokens: options.maxTokens ?? 1000,
-      stream: false,
-      ...(options.json ? { response_format: { type: 'json_object' } } : {})
+    method:'POST',
+    headers:{Authorization:`Bearer ${groqApiKey.value()}`,'Content-Type':'application/json'},
+    body:JSON.stringify({
+      model:GROQ_MODEL,
+      messages:[{role:'system',content:system},{role:'user',content:prompt}],
+      temperature:0.05,
+      max_completion_tokens:maxTokens,
+      stream:false
     })
   });
   if (!response.ok) {
-    const detail = (await response.text()).slice(0, 800);
-    console.error('Groq error', response.status, detail);
-    if (response.status === 429) throw new HttpsError('resource-exhausted', 'Limite de uso da IA atingido.');
-    if (response.status === 401 || response.status === 403) throw new HttpsError('failed-precondition', 'Credencial da IA recusada.');
-    throw new HttpsError('internal', 'Falha ao consultar a IA.');
+    const error = new Error(`Groq HTTP ${response.status}`);
+    error.code = response.status === 429 ? 'resource-exhausted' : 'internal';
+    throw error;
   }
   const payload = await response.json();
-  const content = String(payload?.choices?.[0]?.message?.content || '').trim();
-  if (!content) throw new HttpsError('internal', 'A IA não retornou conteúdo.');
-  return content;
+  const text = String(payload?.choices?.[0]?.message?.content || '').trim();
+  if (!text) throw new Error('Groq retornou resposta vazia.');
+  return {text, provider:'groq'};
 }
 
-function parseJson(text) {
-  try { return JSON.parse(text); } catch (_) {
-    const start = text.indexOf('{');
-    const end = text.lastIndexOf('}');
-    if (start >= 0 && end > start) {
-      try { return JSON.parse(text.slice(start, end + 1)); } catch (_) {}
+async function gemini(system, prompt, maxTokens = 1200) {
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${encodeURIComponent(geminiApiKey.value())}`,
+    {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        systemInstruction:{parts:[{text:system}]},
+        contents:[{role:'user',parts:[{text:prompt}]}],
+        generationConfig:{temperature:0.05,maxOutputTokens:maxTokens}
+      })
     }
-    return null;
-  }
-}
-
-function resolveProject(value, prompt) {
-  const direct = normalize(value);
-  if (REPOSITORIES[direct]) return direct;
-  if (PROJECT_ALIASES[direct]) return PROJECT_ALIASES[direct];
-  const text = normalize(prompt);
-  for (const [alias, key] of Object.entries(PROJECT_ALIASES)) if (text.includes(alias)) return key;
-  return '';
-}
-
-async function githubFetch(path) {
-  const response = await fetch(`https://api.github.com${path}`, {
-    headers: {
-      Authorization: `Bearer ${githubToken.value()}`,
-      Accept: 'application/vnd.github+json',
-      'X-GitHub-Api-Version': '2022-11-28',
-      'User-Agent': 'Nexus-Agent-Core'
-    }
-  });
+  );
   if (!response.ok) {
-    const detail = (await response.text()).slice(0, 500);
-    console.error('GitHub API error', response.status, path, detail);
-    throw new Error(`GitHub HTTP ${response.status}`);
+    const error = new Error(`Gemini HTTP ${response.status}`);
+    error.code = response.status === 429 ? 'resource-exhausted' : 'internal';
+    throw error;
   }
-  return response.json();
+  const payload = await response.json();
+  const text = (payload?.candidates?.[0]?.content?.parts || []).map((p)=>String(p?.text||'')).join('\n').trim();
+  if (!text) throw new Error('Gemini retornou resposta vazia.');
+  return {text, provider:'gemini'};
 }
 
-function encodePath(path) {
-  return String(path).split('/').map(encodeURIComponent).join('/');
-}
-
-function scorePath(path, terms) {
-  const p = normalize(path);
-  const name = p.split('/').pop() || '';
-  let score = 0;
-  for (const term of terms) {
-    if (name === term) score += 12;
-    else if (name.includes(term)) score += 7;
-    else if (p.includes(term)) score += 3;
+async function freeSynthesis(system, prompt) {
+  try { return await groq(system, prompt); }
+  catch (error) {
+    if (!providerFailure(error)) throw error;
+    try { return await gemini(system, prompt); }
+    catch (fallback) {
+      if (providerFailure(fallback)) return null;
+      throw fallback;
+    }
   }
-  if (/firebase|firestore|auth|status|agenda|atendimento|cliente|gasto|item|function|service|api/.test(name)) score += 1;
-  return score;
 }
 
-async function toolGithubInvestigate(args, userPrompt) {
-  const projectKey = resolveProject(args?.project, userPrompt);
-  const repo = REPOSITORIES[projectKey];
-  if (!repo) return { tool: 'github_investigate', ok: false, error: 'Projeto GitHub não identificado.' };
-  const query = String(args?.query || userPrompt).trim();
-  const meta = await githubFetch(`/repos/${repo.fullName}`);
-  const branch = meta.default_branch || 'main';
-  const treePayload = await githubFetch(`/repos/${repo.fullName}/git/trees/${encodeURIComponent(branch)}?recursive=1`);
-  const tree = Array.isArray(treePayload?.tree) ? treePayload.tree : [];
-  const terms = words(query);
-  const explicitRefs = String(query).match(/[A-Za-z0-9_@./-]+\.(?:js|jsx|ts|tsx|html|css|json|md|rules|yml|yaml)\b/gi) || [];
-  let candidates = tree.filter((x) => x.type === 'blob' && Number(x.size || 0) <= MAX_GITHUB_FILE_BYTES)
-    .map((x) => ({ ...x, score: scorePath(x.path, terms) + (explicitRefs.some((ref) => normalize(x.path).endsWith(normalize(ref))) ? 100 : 0) }))
-    .filter((x) => x.score > 0)
-    .sort((a, b) => b.score - a.score || Number(a.size || 0) - Number(b.size || 0))
-    .slice(0, MAX_GITHUB_FILES);
-  if (!candidates.length) candidates = tree.filter((x) => x.type === 'blob' && Number(x.size || 0) <= 60000).slice(0, 3);
+async function loadMaps() {
+  try {
+    const snap = await getFirestore().collection('source_maps').limit(50).get();
+    return snap.docs.map((doc) => {
+      const v = doc.data() || {};
+      return {
+        id:doc.id,
+        project:String(v.project || doc.id),
+        name:String(v.name || v.project || doc.id),
+        aliases:Array.isArray(v.aliases) ? v.aliases.map(String) : [],
+        sources:Array.isArray(v.sources) ? v.sources : []
+      };
+    });
+  } catch (error) {
+    console.error('Nexus v3 source_maps', error);
+    return [];
+  }
+}
 
-  const files = [];
-  for (const candidate of candidates) {
+function mapTerms(map) {
+  return [map.project,map.name,map.id,...(map.aliases||[])].map(normalize).filter(Boolean);
+}
+
+function resolveProject(prompt, maps, explicit='') {
+  const requested = normalize(explicit);
+  if (requested) {
+    const found = maps.find((map)=>mapTerms(map).includes(requested));
+    if (found) return found;
+  }
+  const text = normalize(prompt);
+  const candidates = [];
+  for (const map of maps) {
+    for (const term of mapTerms(map)) {
+      if (term.length >= 3 && text.includes(term)) {
+        candidates.push({map,score:term.length});
+        break;
+      }
+    }
+  }
+  candidates.sort((a,b)=>b.score-a.score);
+  if (candidates[0]) return candidates[0].map;
+
+  const legacy = [
+    {project:'pronti-pet',name:'Pronti Pet',aliases:['pronti pet','pronti-pet'],legacy:true,repository:'giva-norberto/pronti-pet'},
+    {project:'pronti-app',name:'Pronti',aliases:['pronti app','pronti-app','pronti'],legacy:true,repository:'giva-norberto/pronti-app'},
+    {project:'nexus',name:'Nexus',aliases:['nexus'],legacy:true,repository:'giva-norberto/nexus'}
+  ];
+  for (const item of legacy) {
+    if ([item.project,item.name,...item.aliases].map(normalize).some((term)=>text.includes(term))) {
+      return {...item,sources:[{id:'codigo',domain:'codigo',tool:'github_investigate',repository:item.repository,readOnly:true}]};
+    }
+  }
+  return null;
+}
+
+function nowParts(date=new Date()) {
+  const parts = new Intl.DateTimeFormat('en-CA',{timeZone:TZ,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(date);
+  const get=(type)=>Number(parts.find((p)=>p.type===type)?.value||0);
+  return {year:get('year'),month:get('month'),day:get('day')};
+}
+
+// Em 2026 São Paulo usa UTC-3. Intervalos são produzidos como calendário local, não "últimos 30 dias".
+function localStartMs(year,month,day) { return Date.UTC(year,month-1,day,3,0,0,0); }
+function monthRange(year,month,label) {
+  const startMs=localStartMs(year,month,1);
+  const next=new Date(Date.UTC(year,month,1));
+  const endMs=localStartMs(next.getUTCFullYear(),next.getUTCMonth()+1,1)-1;
+  return {kind:'month',label,startMs,endMs};
+}
+function dayRange(year,month,day,label) {
+  const startMs=localStartMs(year,month,day);
+  const next=new Date(Date.UTC(year,month-1,day+1));
+  return {kind:'day',label,startMs,endMs:localStartMs(next.getUTCFullYear(),next.getUTCMonth()+1,next.getUTCDate())-1};
+}
+
+function parsePeriod(prompt, now=new Date()) {
+  const text=normalize(prompt);
+  const current=nowParts(now);
+  if (/\b(este|esse|neste|nesse) mes\b|\bmes atual\b/.test(text)) return monthRange(current.year,current.month,'este mês');
+  if (/\bmes passado\b|\bultimo mes\b/.test(text)) {
+    const d=new Date(Date.UTC(current.year,current.month-2,1));
+    return monthRange(d.getUTCFullYear(),d.getUTCMonth()+1,'mês passado');
+  }
+  for (const [name,month] of Object.entries(MONTHS)) {
+    const match=text.match(new RegExp(`\\b${name}(?:\\s+de\\s+(\\d{4}))?\\b`));
+    if (match) {
+      const year=Number(match[1]||current.year);
+      return monthRange(year,month,`${name} de ${year}`);
+    }
+  }
+  const days=text.match(/\bultim(?:os|as)\s+(\d{1,4})\s+dias?\b/);
+  if (days) {
+    const n=Math.max(1,Math.min(3650,Number(days[1])));
+    return {kind:'days',label:`últimos ${n} dias`,startMs:now.getTime()-n*86400000,endMs:now.getTime(),days:n};
+  }
+  if (/\bhoje\b/.test(text)) return dayRange(current.year,current.month,current.day,'hoje');
+  if (/\bontem\b/.test(text)) {
+    const d=new Date(Date.UTC(current.year,current.month-1,current.day-1));
+    return dayRange(d.getUTCFullYear(),d.getUTCMonth()+1,d.getUTCDate(),'ontem');
+  }
+  return null;
+}
+
+function extractLimit(prompt) {
+  const text=normalize(prompt);
+  const numeric=text.match(/\b(?:top\s*)?(\d{1,2})\s+(?:produto|produtos|item|itens|coisa|coisas|usuario|usuarios)\b/);
+  if (numeric) return Math.max(1,Math.min(20,Number(numeric[1])));
+  for (const [word,n] of Object.entries(NUMBERS)) {
+    if (new RegExp(`\\b${word}\\s+(?:produto|produtos|item|itens|coisa|coisas|usuario|usuarios)\\b`).test(text)) return n;
+  }
+  return null;
+}
+
+function parseIntent(prompt) {
+  const text=normalize(prompt);
+  const entities=new Set();
+  const operations=new Set();
+  const metrics=new Set();
+  const limit=extractLimit(prompt);
+
+  const userCountRequested=/\bquant(?:os|as)\s+(?:usuarios|pessoas|contas)\b|\bnumero de usuarios\b|\btotal de usuarios\b/.test(text);
+  const purchaseCountRequested=/\bquant(?:os|as)\s+compras\b|\bnumero de compras\b|\bcompras analisadas\b/.test(text);
+  const itemCountRequested=/\bquant(?:os|as)\s+(?:itens|produtos)\b|\bnumero de itens\b|\bitens analisados\b/.test(text);
+
+  if (/\busuari|\bpessoa|\bconta|\blogin|\bacess|\bentrou\b|\binativ/.test(text)) entities.add('users');
+  if (/\bproduto|\bitem|\bcoisa|\bmercadoria/.test(text)) entities.add('products');
+  if (/\bcompra|\bgasto|\bgastei|\bdinheiro|\bvalor|\bpreco|\bcusto|\bmercado|\bestabelecimento/.test(text)) entities.add('spending');
+  if (/\bstatus\b|\bfuncionando\b|\bconectad|\bonline\b|\bsaude\b|\bfirebase\b|\bfirestore\b/.test(text)) entities.add('status');
+  if (/\bcodigo\b|\barquivo|\bimplement|\bgithub\b|\brepositorio|\bbug\b|\bfuncao\b|\barquitetura/.test(text)) entities.add('code');
+  if (/\bmemoria\b|\blembra|\bpreferencia|\bdecisao anterior/.test(text)) entities.add('memory');
+
+  if (/\bquanto\b.*\bgast|\btotal gasto\b|\btotal\b.*\bgast|\bsoma\b/.test(text)) {
+    operations.add('sum'); metrics.add('totalSpent'); entities.add('spending');
+  }
+  if (userCountRequested||purchaseCountRequested||itemCountRequested) operations.add('count');
+  if (/\bultimo acesso\b|\bultimo login\b|\bacesso mais recente\b|\blogin mais recente\b|\bquem (?:entrou|acessou) por ultimo\b|\bmais recente\b/.test(text)) operations.add('latest');
+  if (/\bmais tempo sem acess|\blogin mais antigo\b|\bmais antigo\b/.test(text)) operations.add('oldest');
+  if (/\btop\b|\bmais gastei\b|\bmais gasto\b|\bmais pesaram\b|\bmaior aumento\b|\bmenor preco\b/.test(text)) operations.add('ranking');
+  if ((entities.has('spending')||entities.has('products')) && (limit || (/\bmais\b/.test(text) && /\bonde\b|\bquais\b|\bqual\b|\bproduto|\bitem|\bcompra|\bgast|\bdinheiro/.test(text)))) operations.add('ranking');
+  if (entities.has('status')) operations.add('status');
+  if (entities.has('code')) operations.add('investigate');
+
+  if (entities.has('users')) {
+    if (userCountRequested) metrics.add('userCount');
+    if (operations.has('latest')||operations.has('oldest')) metrics.add('lastSignInTime');
+  }
+  if (entities.has('spending')||entities.has('products')) {
+    if (purchaseCountRequested) metrics.add('purchaseCount');
+    if (itemCountRequested) metrics.add('itemCount');
+    if (operations.has('ranking')) {
+      if (/aumento/.test(text)) metrics.add('priceChangePct');
+      else if (/menor preco/.test(text)) metrics.add('minUnitPrice');
+      else metrics.add('productSpend');
+    }
+  }
+
+  return {
+    entities:[...entities],
+    operations:[...operations],
+    metrics:[...metrics],
+    limit,
+    period:parsePeriod(prompt),
+    reasoning:/\banalis(?:e|ar)\b|\brecomend|\bpor que\b|\bporque\b|\bexplique\b|\bo que voce acha\b|\bestrateg|\bconclua\b/.test(text)
+  };
+}
+
+function toolScore(source,intent,prompt) {
+  const tool=String(source?.tool||'');
+  let score=0;
+  if (intent.entities.includes('users')&&tool==='firebase_auth_users') score+=100;
+  if ((intent.entities.includes('spending')||intent.entities.includes('products'))&&tool==='listalar_spending_analytics') score+=100;
+  if (intent.entities.includes('status')&&tool==='firebase_project_status') score+=100;
+  if (intent.entities.includes('code')&&tool==='github_investigate') score+=100;
+  if (intent.entities.includes('memory')&&tool==='memory_search') score+=100;
+
+  const hay=normalize([source?.id,source?.domain,source?.source,...(source?.topics||[])].join(' '));
+  const tokens=normalize(prompt).split(/[^a-z0-9_-]+/).filter((x)=>x.length>=4);
+  score+=tokens.filter((token)=>hay.includes(token)).length*2;
+  return score+Math.min(5,Number(source?.priority||0)/100);
+}
+
+function selectSources(map,intent,prompt) {
+  if (!map?.sources) return [];
+  const ranked=map.sources
+    .filter((s)=>s?.readOnly!==false)
+    .filter((s)=>TOOL_CATALOG.some((tool)=>tool.name===s.tool))
+    .map((s)=>({...s,score:toolScore(s,intent,prompt)}))
+    .filter((s)=>s.score>=20)
+    .sort((a,b)=>b.score-a.score);
+  const selected=[];
+  const seen=new Set();
+  for (const source of ranked) {
+    if (seen.has(source.tool)) continue;
+    if (source.tool==='firestore_read' && /[{][A-Za-z0-9_-]+[}]/.test(JSON.stringify(source.args||{}))) continue;
+    selected.push(source); seen.add(source.tool);
+    if (selected.length>=MAX_TOOLS) break;
+  }
+  return selected;
+}
+
+function toolArgs(source,intent,prompt,map) {
+  const args={...(source.args||{})};
+  if (!args.project) args.project=map.project;
+  if (source.tool==='listalar_spending_analytics' && intent.period) {
+    args.startMs=intent.period.startMs; args.endMs=intent.period.endMs;
+    if (intent.period.days) args.days=intent.period.days;
+  }
+  if (source.tool==='github_investigate') {
+    args.query=prompt;
+    if (source.repository) args.repository=source.repository;
+  }
+  if (source.tool==='memory_search') args.query=prompt;
+  return args;
+}
+
+async function runTools(sources,intent,request,prompt,map) {
+  const evidence=[];
+  const toolsUsed=[];
+  for (const source of sources) {
     try {
-      const payload = await githubFetch(`/repos/${repo.fullName}/contents/${encodePath(candidate.path)}?ref=${encodeURIComponent(branch)}`);
-      if (payload?.encoding !== 'base64' || !payload?.content) continue;
-      const decoded = Buffer.from(String(payload.content).replace(/\n/g, ''), 'base64').toString('utf8');
-      const lines = decoded.split('\n');
-      const hits = [];
-      for (let i = 0; i < lines.length; i += 1) {
-        const line = normalize(lines[i]);
-        if (terms.some((t) => t.length >= 4 && line.includes(t))) hits.push(i);
-      }
-      const centers = hits.length ? hits.slice(0, 5) : [0];
-      const selected = new Set();
-      for (const center of centers) for (let i = Math.max(0, center - 8); i <= Math.min(lines.length - 1, center + 14); i += 1) selected.add(i);
-      const snippet = [...selected].sort((a, b) => a - b).slice(0, 180).map((i) => `${i + 1}: ${lines[i]}`).join('\n');
-      files.push({ path: candidate.path, sha: payload.sha || candidate.sha || '', snippet: clampText(snippet, 7500) });
+      const result=await executeTool(source.tool,toolArgs(source,intent,prompt,map),request,{prompt,githubToken:githubToken.value()});
+      evidence.push(result);
+      toolsUsed.push({name:source.tool,ok:result?.ok!==false,sourceId:source.id||null,domain:source.domain||null});
     } catch (error) {
-      console.error('Agent GitHub file error', candidate.path, error);
+      evidence.push({tool:source.tool,ok:false,error:String(error?.message||error)});
+      toolsUsed.push({name:source.tool,ok:false,sourceId:source.id||null,domain:source.domain||null});
     }
   }
-  return {
-    tool: 'github_investigate', ok: true, project: repo.name, repository: repo.fullName,
-    defaultBranch: branch, files, note: files.length ? 'Arquivos reais lidos do GitHub.' : 'Nenhum arquivo relevante pôde ser lido.'
-  };
+  return {evidence,toolsUsed};
 }
 
-async function toolMemorySearch(args, userPrompt) {
-  const db = getFirestore();
-  const snap = await db.collection('memory').orderBy('createdAt', 'desc').limit(80).get();
-  const query = String(args?.query || userPrompt);
-  const terms = words(query);
-  const project = normalize(args?.project || '');
-  const scored = snap.docs.map((doc) => {
-    const data = doc.data() || {};
-    const hay = normalize(`${data.project || ''} ${data.type || ''} ${data.text || ''}`);
-    let score = terms.reduce((n, t) => n + (hay.includes(t) ? 1 : 0), 0);
-    if (project && normalize(data.project).includes(project)) score += 3;
-    return { id: doc.id, project: String(data.project || ''), type: String(data.type || ''), text: String(data.text || ''), score };
-  }).filter((x) => x.score > 0).sort((a, b) => b.score - a.score).slice(0, 12);
-  return { tool: 'memory_search', ok: true, matches: scored };
+function money(value) {
+  return new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(Number(value||0));
 }
+function date(value) {
+  const d=new Date(value);
+  return Number.isNaN(d.getTime())?String(value):new Intl.DateTimeFormat('pt-BR',{dateStyle:'short',timeStyle:'medium',timeZone:TZ}).format(d);
+}
+function periodText(intent) { return intent.period?.label ? ` em ${intent.period.label}` : ''; }
 
-function getListaLarApp() {
-  const name = 'nexus-agent-listalar';
-  const existing = getApps().find((app) => app.name === name);
-  if (existing) return existing;
-  try { return getApp(name); } catch (_) {
-    return initializeApp({ credential: applicationDefault(), projectId: 'compras-da-casa' }, name);
+function analyticsAnswer(intent,result) {
+  const lines=[];
+  const suffix=periodText(intent);
+  if (intent.metrics.includes('totalSpent')||intent.operations.includes('sum')) lines.push(`Total gasto${suffix}: ${money(result?.totalSpent)}.`);
+  if (intent.metrics.includes('purchaseCount')) lines.push(`Compras${suffix}: ${result?.purchaseCount??0}.`);
+  if (intent.metrics.includes('itemCount')) lines.push(`Itens${suffix}: ${result?.itemCount??0}.`);
+  if (intent.operations.includes('ranking')&&intent.metrics.includes('productSpend')) {
+    const items=(result?.topBySpend||[]).slice(0,intent.limit||5);
+    lines.push(`Produtos com maior gasto${suffix}:`);
+    items.forEach((item,i)=>lines.push(`${i+1}. ${item.name||item.key||'Produto'} — ${money(item.totalSpent)}.`));
   }
+  if (intent.operations.includes('ranking')&&intent.metrics.includes('priceChangePct')) {
+    const items=(result?.topPriceIncreases||[]).slice(0,intent.limit||5);
+    lines.push(`Maiores aumentos de preço${suffix}:`);
+    items.forEach((item,i)=>lines.push(`${i+1}. ${item.name||item.key||'Produto'} — ${Number(item.priceChangePct||0).toFixed(2)}%.`));
+  }
+  if (!lines.length) lines.push(`Total gasto observado${suffix}: ${money(result?.totalSpent)}. Compras: ${result?.purchaseCount??0}. Itens: ${result?.itemCount??0}.`);
+  return lines.join('\n');
 }
 
-function number(value) {
-  if (typeof value === 'number' && Number.isFinite(value)) return value;
-  let text = String(value ?? '').trim().replace(/^R\$/i, '').replace(/\s/g, '');
-  if (text.includes(',') && text.includes('.')) text = text.replace(/\./g, '').replace(',', '.'); else text = text.replace(',', '.');
-  const n = Number(text);
-  return Number.isFinite(n) ? n : 0;
+function authAnswer(intent,result) {
+  const users=Array.isArray(result?.users)?result.users:[];
+  const valid=users.filter((u)=>u.lastSignInTime&&Number.isFinite(Date.parse(u.lastSignInTime)));
+  const lines=[];
+  if (intent.metrics.includes('userCount')) lines.push(`Total de usuários: ${result?.returned??users.length}.`);
+  if (intent.operations.includes('latest')&&valid[0]) lines.push(`Acesso mais recente: ${valid[0].displayName||valid[0].email} — ${date(valid[0].lastSignInTime)}.`);
+  if (intent.operations.includes('oldest')&&valid.length) {
+    const u=valid[valid.length-1];
+    lines.push(`Há mais tempo sem novo login: ${u.displayName||u.email} — último login em ${date(u.lastSignInTime)}.`);
+  }
+  return lines.join('\n')||`Total de usuários: ${result?.returned??users.length}.`;
 }
 
-function dateMs(value) {
-  if (!value) return NaN;
-  if (typeof value.toMillis === 'function') return value.toMillis();
-  if (typeof value.toDate === 'function') return value.toDate().getTime();
-  if (typeof value === 'number') return value;
-  const n = Date.parse(String(value));
-  return Number.isFinite(n) ? n : NaN;
-}
-
-function money(n) { return Math.round((number(n) + Number.EPSILON) * 100) / 100; }
-
-async function toolListaLarAnalytics(args, userPrompt) {
-  const db = getFirestore(getListaLarApp());
-  const query = normalize(args?.query || userPrompt);
-  const productHint = normalize(args?.product || args?.entity || '');
-  const days = Math.max(0, Math.min(3650, Number(args?.days || 0)));
-  const cutoff = days ? Date.now() - days * 86400000 : null;
-  const families = await db.collection('familias').limit(MAX_FAMILIES).get();
-  const map = new Map();
-  let purchases = 0, itemRows = 0, totalSpent = 0;
-
-  for (const family of families.docs) {
-    if (purchases >= MAX_PURCHASES || itemRows >= MAX_ITEMS) break;
-    const gastos = await family.ref.collection('gastos').limit(MAX_PURCHASES - purchases).get();
-    for (const gastoDoc of gastos.docs) {
-      if (purchases >= MAX_PURCHASES || itemRows >= MAX_ITEMS) break;
-      const gasto = gastoDoc.data() || {};
-      const dms = dateMs(gasto.dataCompraMs || gasto.dataCompra || gasto.criadoEm);
-      if (cutoff && Number.isFinite(dms) && dms < cutoff) continue;
-      purchases += 1;
-      totalSpent += number(gasto.valorTotal);
-      const items = await gastoDoc.ref.collection('itens').limit(MAX_ITEMS - itemRows).get();
-      for (const itemDoc of items.docs) {
-        if (itemRows >= MAX_ITEMS) break;
-        itemRows += 1;
-        const item = itemDoc.data() || {};
-        const name = String(item.descricao || item.descricaoOriginal || 'Item sem descrição').trim();
-        const productId = String(item.produtoId || '').trim();
-        const gtin = String(item.gtin || '').trim();
-        const key = productId ? `p:${productId}` : gtin ? `g:${gtin}` : `d:${normalize(name)}`;
-        const qty = Math.max(0, number(item.quantidade));
-        const unit = Math.max(0, number(item.precoUnitario));
-        const line = Math.max(0, number(item.valorTotal) || qty * unit);
-        const current = map.get(key) || { key, name, totalSpent: 0, quantity: 0, occurrences: 0, history: [] };
-        current.totalSpent += line; current.quantity += qty; current.occurrences += 1;
-        if (name.length > current.name.length) current.name = name;
-        if (current.history.length < 60) current.history.push({ dateMs: Number.isFinite(dms) ? dms : null, date: Number.isFinite(dms) ? new Date(dms).toISOString() : null, unitPrice: money(unit), quantity: qty, lineTotal: money(line), establishment: String(gasto.estabelecimentoNome || '') });
-        map.set(key, current);
-      }
+function deterministic(intent,evidence) {
+  const sections=[];
+  for (const item of evidence) {
+    if (!item||item.ok===false) { sections.push(`${item?.tool||'Ferramenta'}: falha — ${item?.error||'sem detalhe'}.`); continue; }
+    if (item.tool==='listalar_spending_analytics') sections.push(analyticsAnswer(intent,item));
+    else if (item.tool==='firebase_auth_users') sections.push(authAnswer(intent,item));
+    else if (item.tool==='firebase_project_status') {
+      const a=item.authentication; const f=item.firestore;
+      sections.push([
+        a?`Authentication: ${a.totalUsers??0} usuário(s), ${a.enabledUsers??0} ativo(s), ${a.disabledUsers??0} desativado(s).`:'',
+        f?`Firestore: ${f.rootCollectionCount??0} coleção(ões) raiz${f.rootCollections?.length?` (${f.rootCollections.join(', ')})`:''}.`:''
+      ].filter(Boolean).join('\n'));
+    } else if (item.tool==='github_investigate') {
+      const files=(item.files||[]).filter((x)=>x?.path);
+      sections.push(files.length?`GitHub ${item.repository||''}: arquivos mais relevantes:\n${files.map((x,i)=>`${i+1}. ${x.path}`).join('\n')}`:'Nenhum arquivo relevante encontrado.');
+    } else if (item.tool==='memory_search') {
+      const matches=(item.matches||[]).slice(0,8);
+      sections.push(matches.length?matches.map((m,i)=>`${i+1}. ${m.text}`).join('\n'):'Não encontrei memória relevante.');
     }
   }
-
-  const products = [...map.values()].map((p) => {
-    const history = p.history.filter((h) => h.unitPrice > 0).sort((a, b) => (a.dateMs ?? Number.MAX_SAFE_INTEGER) - (b.dateMs ?? Number.MAX_SAFE_INTEGER));
-    const first = history[0] || null, last = history[history.length - 1] || null;
-    const change = first && last ? money(last.unitPrice - first.unitPrice) : 0;
-    const changePct = first && last && first.unitPrice > 0 ? Math.round((change / first.unitPrice) * 10000) / 100 : 0;
-    return {
-      name: p.name, totalSpent: money(p.totalSpent), quantity: Math.round(p.quantity * 1000) / 1000, occurrences: p.occurrences,
-      avgUnitPrice: p.quantity > 0 ? money(p.totalSpent / p.quantity) : 0,
-      firstUnitPrice: first?.unitPrice || 0, lastUnitPrice: last?.unitPrice || 0,
-      priceChange: change, priceChangePct: changePct,
-      minUnitPrice: history.length ? Math.min(...history.map((h) => h.unitPrice)) : 0,
-      maxUnitPrice: history.length ? Math.max(...history.map((h) => h.unitPrice)) : 0,
-      history: history.slice(-20).map(({ dateMs: _, ...rest }) => rest)
-    };
-  });
-
-  const matching = productHint ? products.filter((p) => normalize(p.name).includes(productHint) || productHint.split(' ').every((w) => normalize(p.name).includes(w))) : [];
-  const topSpend = [...products].sort((a,b) => b.totalSpent - a.totalSpent).slice(0,10);
-  const topFrequency = [...products].sort((a,b) => b.occurrences - a.occurrences).slice(0,10);
-  const increases = products.filter((p) => p.occurrences >= 2 && p.priceChange > 0).sort((a,b) => b.priceChangePct - a.priceChangePct).slice(0,10);
-  const decreases = products.filter((p) => p.occurrences >= 2 && p.priceChange < 0).sort((a,b) => a.priceChangePct - b.priceChangePct).slice(0,10);
-  const mostExpensive = [...products].sort((a,b) => b.maxUnitPrice - a.maxUnitPrice).slice(0,10);
-  return {
-    tool: 'listalar_analytics', ok: true, readOnly: true,
-    summary: { purchases, itemRows, uniqueProducts: products.length, totalSpent: money(totalSpent), days: days || null },
-    productHint: productHint || null, matchingProducts: matching.slice(0,12), topSpend, topFrequency, priceIncreases: increases, priceDecreases: decreases, mostExpensive,
-    interpretationHint: query
-  };
+  return sections.join('\n\n')||'Não encontrei evidência suficiente para responder com segurança.';
 }
 
-async function plan(prompt, history) {
-  const plannerSystem = [
-    'Você é o planejador do Nexus Agent Core. Sua função é decidir quais ferramentas de SOMENTE LEITURA usar antes de responder.',
-    'Retorne APENAS JSON válido.',
-    'Ferramentas permitidas: memory_search, github_investigate, listalar_analytics.',
-    'Use listalar_analytics para qualquer pergunta factual sobre compras, produtos, gastos, preços, aumento/queda de preço, frequência ou histórico do ListaLar.',
-    'Use github_investigate para perguntas sobre código, bug, arquitetura, implementação ou estado de repositório.',
-    'Use memory_search quando memória persistente puder ser relevante para regra, decisão, preferência ou contexto do usuário.',
-    'Não invente ferramentas. Máximo 3 chamadas. Se a pergunta puder ser respondida conversacionalmente sem dados reais, tools pode ser vazio.',
-    'Para continuação como "e onde foi mais barato?", use o histórico para recuperar o assunto/produto anterior.',
-    'Formato: {"objective":"...","project":"...","entities":["..."],"tools":[{"name":"...","args":{...}}],"needsClarification":false,"clarification":""}'
+async function synthesize(prompt,intent,evidence) {
+  const system=[
+    'Você é Nexus Agent Core v3.',
+    'A intenção já foi estruturada e as ferramentas já foram executadas; não planeje novamente.',
+    'Responda em português do Brasil, de forma direta.',
+    'Use somente as evidências fornecidas para afirmar fatos.',
+    'Não invente arquivos, dados, datas ou ações.',
+    'Em código, use os snippets para indicar o arquivo mais provável/confirmado e diga quando a evidência não bastar.',
+    'Modo somente leitura; nenhuma alternativa paga.'
   ].join(' ');
-  const content = await callGroq([
-    { role: 'system', content: plannerSystem },
-    ...history,
-    { role: 'user', content: prompt }
-  ], { json: true, maxTokens: 650, temperature: 0 });
-  const parsed = parseJson(content);
-  if (!parsed || !Array.isArray(parsed.tools)) return { objective: prompt, project: '', entities: [], tools: [], needsClarification: false };
-  parsed.tools = parsed.tools.filter((t) => ['memory_search','github_investigate','listalar_analytics'].includes(t?.name)).slice(0, MAX_TOOL_CALLS);
-  return parsed;
+  return freeSynthesis(system,`Pergunta: ${prompt}\n\nIntenção: ${JSON.stringify(intent)}\n\nEvidências: ${JSON.stringify(evidence).slice(0,30000)}`);
 }
 
-async function executeTool(call, prompt) {
-  if (call.name === 'memory_search') return toolMemorySearch(call.args || {}, prompt);
-  if (call.name === 'github_investigate') return toolGithubInvestigate(call.args || {}, prompt);
-  if (call.name === 'listalar_analytics') return toolListaLarAnalytics(call.args || {}, prompt);
-  return { tool: call.name, ok: false, error: 'Ferramenta não permitida.' };
-}
-
-exports.askNexusAgent = onCall(
-  { region: 'southamerica-east1', secrets: [groqApiKey, githubToken], maxInstances: 1, timeoutSeconds: 120, memory: '512MiB' },
-  async (request) => {
+exports.askNexusAgent=onCall(
+  {region:'southamerica-east1',secrets:[groqApiKey,githubToken,geminiApiKey],maxInstances:1,timeoutSeconds:120,memory:'512MiB'},
+  async (request)=>{
     assertAuthorized(request);
-    const prompt = String(request.data?.prompt || '').trim();
-    if (!prompt) throw new HttpsError('invalid-argument', 'Informe uma pergunta.');
-    if (prompt.length > MAX_PROMPT_CHARS) throw new HttpsError('invalid-argument', `Pergunta limitada a ${MAX_PROMPT_CHARS} caracteres.`);
-    const history = safeHistory(request.data?.history);
+    const prompt=String(request.data?.prompt||'').trim();
+    if (!prompt) throw new HttpsError('invalid-argument','Informe uma pergunta.');
+    if (prompt.length>MAX_PROMPT_CHARS) throw new HttpsError('invalid-argument',`Pergunta limitada a ${MAX_PROMPT_CHARS} caracteres.`);
 
-    const planResult = await plan(prompt, history);
-    if (planResult.needsClarification && planResult.clarification) {
-      return { answer: String(planResult.clarification), agentCore: true, plan: planResult, toolsUsed: [] };
+    const maps=await loadMaps();
+    const map=resolveProject(prompt,maps,request.data?.project||'');
+    const intent=parseIntent(prompt);
+    if (!map) return {answer:'Não consegui identificar o projeto. Informe o projeto ou cadastre-o no Índice de Fontes.',agentCore:true,version:'3.0',intent,readOnly:true,freeOnlyPolicy:true};
+
+    const sources=selectSources(map,intent,prompt);
+    if (!sources.length) return {answer:`Identifiquei ${map.name}, mas o Índice de Fontes não tem uma capacidade compatível com esta pergunta.`,agentCore:true,version:'3.0',intent,sourceMapProject:map.project,readOnly:true,freeOnlyPolicy:true};
+
+    const {evidence,toolsUsed}=await runTools(sources,intent,request,prompt,map);
+    let answer=deterministic(intent,evidence);
+    let provider='native';
+    let aiCalls=0;
+
+    if (intent.reasoning||intent.entities.includes('code')) {
+      const result=await synthesize(prompt,intent,evidence);
+      if (result?.text) { answer=result.text; provider=result.provider; aiCalls=1; }
     }
-
-    const evidence = [];
-    for (const call of planResult.tools) {
-      try { evidence.push(await executeTool(call, prompt)); }
-      catch (error) { console.error('Agent tool failed', call?.name, error); evidence.push({ tool: call?.name || 'unknown', ok: false, error: String(error?.message || error) }); }
-    }
-
-    const evidenceText = clampText(JSON.stringify(evidence, null, 2), MAX_EVIDENCE_CHARS);
-    const answerSystem = [
-      'Você é Nexus, agente técnico central do Giva. Responda em português do Brasil.',
-      'Responda especificamente ao que foi perguntado; não despeje um relatório padrão.',
-      'Use somente as evidências fornecidas para afirmar fatos sobre projetos, compras, preços, GitHub, Firebase ou memória.',
-      'Se a evidência não sustentar uma conclusão, diga claramente que não há dados suficientes.',
-      'Em perguntas de preço, diferencie preço unitário, total gasto e quantidade.',
-      'Em evolução de preço, use cronologia: primeiro preço versus último preço e variação percentual; não confunda mínimo/máximo com tendência.',
-      'Em investigação de código, cite caminho do arquivo e linhas quando o snippet trouxer números de linha.',
-      'Não diga que alterou, fez merge, deployou ou gravou dados. Esta função é somente leitura.',
-      'Se houver várias evidências, sintetize. Evite respostas repetitivas e modelos fixos.'
-    ].join(' ');
-
-    const answer = await callGroq([
-      { role: 'system', content: answerSystem },
-      ...history,
-      { role: 'user', content: `Pergunta atual: ${prompt}\n\nPlano do Nexus:\n${JSON.stringify(planResult)}\n\nEvidências reais obtidas pelas ferramentas:\n${evidenceText}` }
-    ], { maxTokens: 1200, temperature: 0.15 });
 
     return {
       answer,
-      agentCore: true,
-      plan: { objective: planResult.objective || '', project: planResult.project || '', entities: planResult.entities || [], tools: planResult.tools.map((t) => t.name) },
-      toolsUsed: evidence.map((x) => ({ name: x.tool, ok: Boolean(x.ok) })),
-      readOnly: true
+      agentCore:true,
+      version:'3.0',
+      architecture:'intent-capability-tool',
+      sourceMapProject:map.project,
+      sourceMapLoaded:!map.legacy,
+      intent,
+      matchedSources:sources.map((s)=>({id:s.id||null,domain:s.domain||null,tool:s.tool,score:Math.round(s.score*100)/100})),
+      toolsUsed,
+      evidenceCount:evidence.length,
+      provider,
+      aiCalls,
+      zeroAiRoute:aiCalls===0,
+      readOnly:true,
+      freeOnlyPolicy:true
     };
   }
 );
