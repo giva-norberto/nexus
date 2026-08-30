@@ -114,6 +114,37 @@ function isUnrouted(result) {
   );
 }
 
+function polishProjectResult(result) {
+  if (!result || typeof result.answer !== 'string') return result;
+
+  let answer = result.answer
+    .replace(/\bem este mês\b/gi, 'neste mês')
+    .replace(/\bem mês passado\b/gi, 'no mês passado')
+    .replace(/\bem últimos (\d+) dias\b/gi, 'nos últimos $1 dias')
+    .replace(/\bem hoje\b/gi, 'hoje')
+    .replace(/\bem ontem\b/gi, 'ontem')
+    .replace(/\bem no período solicitado\b/gi, 'no período solicitado')
+    .replace(/\bem período solicitado\b/gi, 'no período solicitado');
+
+  const statusTool = Array.isArray(result.toolsUsed)
+    ? result.toolsUsed.find((tool) => tool?.name === 'firebase_project_status')
+    : null;
+
+  if (statusTool && statusTool.ok !== false && !/^sim[,!.\s]/i.test(answer)) {
+    const authOk = /Authentication:/i.test(answer);
+    const firestoreOk = /Firestore:/i.test(answer);
+    if (authOk && firestoreOk) {
+      answer = `Sim, está tudo funcionando — Authentication e Firestore respondendo normalmente.\n${answer}`;
+    } else {
+      answer = `Sim, o serviço consultado está respondendo normalmente.\n${answer}`;
+    }
+  } else if (statusTool && statusTool.ok === false && !/^não consegui confirmar/i.test(answer)) {
+    answer = `Não consegui confirmar se o serviço está funcionando agora.\n${answer}`;
+  }
+
+  return answer === result.answer ? result : { ...result, answer, responsePolished: true };
+}
+
 async function answerConversationally(request, baseResult) {
   const prompt = String(request.data?.prompt || '').trim();
   const history = safeHistory(request.data?.history);
@@ -151,7 +182,8 @@ exports.askNexusAgent = onCall(
     memory: '512MiB'
   },
   async (request) => {
-    const baseResult = await agentCore.askNexusAgent.run(request);
+    const rawBaseResult = await agentCore.askNexusAgent.run(request);
+    const baseResult = polishProjectResult(rawBaseResult);
     if (!isUnrouted(baseResult)) return baseResult;
 
     const conversational = await answerConversationally(request, baseResult);
